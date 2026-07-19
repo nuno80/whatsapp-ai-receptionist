@@ -80,6 +80,23 @@ See [DECISIONS.md](DECISIONS.md) for the full rationale behind each technical ch
 
 ---
 
+### The Single-Number Approval Magic
+
+One of the most powerful features of this bot is that **the business only needs ONE WhatsApp Business API number**. 
+
+You do not need separate WhatsApp numbers for the guests and the owners. 
+Here is exactly how `authorized_approvers` work under the hood:
+
+1. **Detection**: When a message arrives from WhatsApp, the very first thing the app does is check the sender's phone number against the `authorized_approvers` list in `config.yaml`.
+2. **Routing bypass**: If the sender is an owner (e.g., Marco or Anna), the message *bypasses the AI receptionist entirely*. The bot knows it's the boss talking, not a guest, so it routes the message straight to the Approval Module instead of Claude.
+3. **Fanning out requests**: When a guest requests a stay, the bot uses the single WhatsApp Business API number to send an outbound WhatsApp message to the personal phone numbers of Marco and Anna. To Marco and Anna, the request arrives as a normal WhatsApp chat message from their own B&B's business number.
+4. **Atomic claims**: When Marco replies `OK x1y2` from his personal WhatsApp app to the B&B number, the bot receives it, verifies he is an approver, and executes the calendar action. If Anna replies `OK x1y2` two seconds later, the bot checks Redis and replies to her saying *"Request x1y2 was already handled by Marco."*
+5. **Guest Notification**: After Marco approves, the bot sends the final confirmation message to the guest. 
+
+The end result: Guests chat with the AI, while owners manage the B&B by simply chatting with their own bot.
+
+---
+
 ## Quick start
 
 ### 1. Clone and install
