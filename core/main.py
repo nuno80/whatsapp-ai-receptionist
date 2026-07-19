@@ -717,6 +717,7 @@ async def _handle_modification_request(phone: str, visible_response: str):
             f"What date and time would you like to change it to?"
         )
     else:
+        # Instead of pending_cancellation, we use pending_modification logic for the index
         _save_pending_cancellation(phone, events)
         lines = [f"{visible_response}\n\nI found these appointments:\n"]
         for i, e in enumerate(events, 1):
@@ -731,40 +732,123 @@ async def _handle_modification_request(phone: str, visible_response: str):
 
 
 async def _handle_modification_confirmed(phone: str, intent: dict, visible_response: str):
-    """User chose which event to modify (multiple events case)."""
+    """User confirmed their new modification details — send to approvers."""
     cal = _get_calendar_client()
     if cal is None:
         await WA.send_text(phone, "The booking module is not available.")
         return
 
+    # Check if they are answering the "which one" question
     events = _get_pending_cancellation(phone)
-    if not events:
-        msg = "I couldn't find an active modification request. Let me know which appointment you'd like to change."
+    if events and "event_index" in intent:
+        event_index = intent.get("event_index", 1)
+        try:
+            event_index = int(event_index)
+        except (TypeError, ValueError):
+            event_index = 1
+
+        if event_index < 1 or event_index > len(events):
+            msg = f"Invalid number. Please choose a number from 1 to {len(events)}."
+            HISTORY.add(phone, "assistant", msg)
+            await WA.send_text(phone, msg)
+            return
+
+        event = events[event_index - 1]
+        _delete_pending_cancellation(phone)
+        _save_pending_modification(phone, event)
+
+        msg = (
+            f"Sure, let's modify *{event['summary']}* on {event['date']} at {event['time']}.\n\n"
+            f"What date and time would you like to change it to?"
+        )
         HISTORY.add(phone, "assistant", msg)
         await WA.send_text(phone, msg)
         return
 
-    event_index = intent.get("event_index", 1)
+    # User provided new dates
+    old_event = _get_pending_modification(phone)
+    if not old_event:
+        msg = "I couldn't find an active modification request. Would you like to modify an appointment?"
+        HISTORY.add(phone, "assistant", msg)
+        await WA.send_text(phone, msg)
+        return
+
     try:
-        event_index = int(event_index)
-    except (TypeError, ValueError):
-        event_index = 1
-
-    if event_index < 1 or event_index > len(events):
-        msg = f"Invalid number. Please choose a number from 1 to {len(events)}."
-        HISTORY.add(phone, "assistant", msg)
-        await WA.send_text(phone, msg)
+        checkin_date = date.fromisoformat(intent["checkin"])
+        checkout_date = date.fromisoformat(intent["checkout"])
+    except (ValueError, KeyError) as e:
+        logger.warning("Invalid date in intent: %s", e)
+        error_msg = "C'è stato un problema con le date. Puoi riprovare?"
+        HISTORY.add(phone, "assistant", error_msg)
+        await WA.send_text(phone, error_msg)
         return
 
-    event = events[event_index - 1]
-    _delete_pending_cancellation(phone)
-    # Store event for deletion when new booking is confirmed
-    _save_pending_modification(phone, event)
+    import pytz
+    from datetime import datetime
+    timezone = pytz.timezone(CONFIG["client"]["timezone"])
+    today = datetime.now(timezone).date()
+    
+    if checkin_date < today:
+        error_msg = "La data di check-in non può essere nel passato. Quali altre date cerchi?"
+        HISTORY.add(phone, "assistant", error_msg)
+        await WA.send_text(phone, error_msg)
+        return
+        
+    if checkout_date <= checkin_date:
+        error_msg = "La data di check-out deve essere successiva al check-in."
+        HISTORY.add(phone, "assistant", error_msg)
+        await WA.send_text(phone, error_msg)
+        return
 
-    msg = (
-        f"Sure, let's modify *{event['summary']}* on {event['date']} at {event['time']}.\n\n"
-        f"What date and time would you like to change it to?"
-    )
+    # Verify new availability excluding old event
+    if not cal.is_range_available(checkin_date, checkout_date, exclude_event_id=old_event["id"]):
+        error_msg = f"Purtroppo le date dal {checkin_date.strftime('%d/%m')} al {checkout_date.strftime('%d/%m')} non sono disponibili. Vuoi controllare altri giorni?"
+        HISTORY.add(phone, "assistant", error_msg)
+        await WA.send_text(phone, error_msg)
+        return
+
+    guests = intent.get("guests", 1)
+    
+    from modules.booking.pricing import price_for_stay
+    pricing_periods = CONFIG["booking"].get("pricing_periods", [])
+    try:
+        total_price = price_for_stay(checkin_date, checkout_date, pricing_periods)
+    except Exception as e:
+        logger.error("Pricing error: %s", e)
+        error_msg = "Non sono riuscito a calcolare il prezzo per queste date. Per favore riprova o contattaci."
+        HISTORY.add(phone, "assistant", error_msg)
+        await WA.send_text(phone, error_msg)
+        return
+
+    cal.lock_range(checkin_date, checkout_date)
+
+    try:
+        from modules.approval.workflow import create_request
+        redis_client = _get_pending_payment_redis()
+        
+        request_data = {
+            "type": "modify",
+            "guest_phone": phone,
+            "guest_name": intent.get("user_name", "Ospite"),
+            "event_id": old_event["id"],
+            "checkin": checkin_date.isoformat(),
+            "checkout": checkout_date.isoformat(),
+            "guests": guests,
+            "total": total_price,
+            "lang": intent.get("lang", "it")
+        }
+        
+        await create_request(redis_client, CONFIG, WA, request_data)
+        _delete_pending_modification(phone)
+        
+        msg = (
+            f"La tua richiesta di modifica per il soggiorno dal {checkin_date.strftime('%d/%m')} "
+            f"al {checkout_date.strftime('%d/%m')} (totale: €{total_price}) è stata inviata per l'approvazione."
+        )
+    except Exception as e:
+        logger.error("Failed to create modification request: %s", e)
+        msg = "C'è stato un problema nel processare la richiesta. Per favore contattaci direttamente."
+
     HISTORY.add(phone, "assistant", msg)
     await WA.send_text(phone, msg)
 

@@ -96,6 +96,37 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
         cal = _get_calendar_client(config)
         req_type = req_data.get("type", "create")
         
+        if req_type == "modify" and cal and "event_id" in req_data and "checkin" in req_data and "checkout" in req_data:
+            checkin = date.fromisoformat(req_data["checkin"])
+            checkout = date.fromisoformat(req_data["checkout"])
+            
+            cal.release_range(checkin, checkout)
+            
+            if action == "OK":
+                cal.delete_event(req_data["event_id"])
+                cal.create_event(
+                    checkin_date=checkin,
+                    checkout_date=checkout,
+                    guest_name=req_data.get("guest_name", "Ospite"),
+                    guest_phone=guest_phone,
+                    guests_count=req_data.get("guests", 1),
+                    total_price=req_data.get("total", 0),
+                    language=req_data.get("lang", "it"),
+                    payment_state="pending",
+                    request_id=req_id
+                )
+                if guest_phone:
+                    await whatsapp_client.send_message(
+                        to=guest_phone,
+                        text=f"La tua modifica è stata confermata! Il nuovo totale è €{req_data.get('total', 0)}."
+                    )
+            else:
+                if guest_phone:
+                    await whatsapp_client.send_message(
+                        to=guest_phone,
+                        text="La tua richiesta di modifica non è stata approvata. Il soggiorno originale rimane confermato."
+                    )
+
         if req_type == "create" and cal and "checkin" in req_data and "checkout" in req_data:
             checkin = date.fromisoformat(req_data["checkin"])
             checkout = date.fromisoformat(req_data["checkout"])
