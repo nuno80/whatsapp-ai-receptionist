@@ -116,23 +116,35 @@ Edit `config.yaml` with your business details:
 
 Populate the knowledge base by editing `knowledge/it.txt`, `knowledge/en.txt`, etc.
 
-### 3. Run
+### 3. Run the application
+
+The application must be **running constantly** to receive and respond to WhatsApp messages. If the app stops, your bot goes offline.
+
+For local development or testing, you can run it in your terminal:
 
 ```bash
 uvicorn core.main:app --reload
 ```
 
-### 4. Expose for WhatsApp
+*(Keep this terminal window open!)*
 
-Use [ngrok](https://ngrok.com/) for local development:
+### 4. Expose for WhatsApp (Local Development)
+
+WhatsApp needs a public URL to send messages to. If you are running the app on your local computer, you must expose your local port `8000` to the internet using [ngrok](https://ngrok.com/).
+
+In a **second terminal window** (keep the `uvicorn` one running!), run:
 
 ```bash
 ngrok http 8000
 ```
 
-Set the webhook URL in [Meta Developer Portal](https://developers.facebook.com/) -> WhatsApp -> Configuration:
-- Callback URL: `https://your-ngrok-url.ngrok.io/webhook`
-- Verify token: same as your `WHATSAPP_VERIFY_TOKEN`
+Ngrok will give you a public URL (e.g., `https://a1b2c3d4.ngrok.app`). **Leave this terminal open too.**
+
+Set the webhook URL in the [Meta Developer Portal](https://developers.facebook.com/) -> WhatsApp -> Configuration:
+- **Callback URL**: `https://your-ngrok-url.ngrok.app/webhook`
+- **Verify token**: The exact string you set as `WHATSAPP_VERIFY_TOKEN` in your `.env` file.
+
+*Note for Production: In a real environment, you will not use ngrok. You will deploy the app to a server (like Railway, Render, or a VPS) where it runs 24/7 with a permanent URL.*
 
 ---
 
@@ -182,7 +194,16 @@ booking:
 
 ### knowledge/
 
-Free-text knowledge base about the business divided by language (`it.txt`, `en.txt`, etc). The AI uses this to answer questions. Write it like you'd explain the business to a new receptionist.
+A directory containing plain text files (`.txt` format) for each supported language. When a guest messages the bot, their language is automatically detected, and the bot loads the corresponding knowledge base file to respond in that same language.
+
+Create these files in the `knowledge/` directory:
+- `it.txt` (Italian - acts as the default fallback)
+- `en.txt` (English)
+- `es.txt` (Spanish)
+- `fr.txt` (French)
+- `de.txt` (German)
+
+**Format**: Write pure, unformatted text. Write it exactly like you'd explain the B&B rules, check-in instructions, parking, and amenities to a new human receptionist. The AI will read this file and use the facts inside to answer guest questions.
 
 ---
 
