@@ -1,48 +1,46 @@
 from datetime import date, timedelta
+from typing import List, Dict, Any
 
 
 class UnpricedNightError(Exception):
-    """A stay includes a night not covered by any pricing period."""
+    pass
 
 
-def _nights(checkin: date, checkout: date):
-    """Yield each occupied night date (checkin inclusive, checkout exclusive)."""
-    for i in range((checkout - checkin).days):
-        yield checkin + timedelta(days=i)
+def _inclusive_dates(start_str: str, end_str: str):
+    s = date.fromisoformat(start_str)
+    e = date.fromisoformat(end_str)
+    return s, e
 
 
-def price_for_stay(checkin: date, checkout: date, pricing_periods: list) -> int:
-    """Total price in EUR for a stay.
-
-    Each night (checkin inclusive ... checkout exclusive) is priced by the last
-    pricing period in the list whose inclusive start_date/end_date covers it.
-    Raises UnpricedNightError if any night is uncovered — no silent default price.
-    """
+def price_for_stay(checkin: date, checkout: date, pricing_periods: List[Dict[str, Any]]) -> int:
     total = 0
-    for night in _nights(checkin, checkout):
+    current = checkin
+    while current < checkout:
         price = None
+        # last matching period wins
         for period in pricing_periods:
-            start = date.fromisoformat(period["start_date"])
-            end = date.fromisoformat(period["end_date"])
-            if start <= night <= end:
+            s, e = _inclusive_dates(period["start_date"], period["end_date"])
+            if s <= current <= e:
                 price = period["price_per_night"]
+
         if price is None:
-            raise UnpricedNightError(f"No pricing period covers night {night.isoformat()}")
+            raise UnpricedNightError(f"No price defined for night {current}")
+
         total += price
+        current += timedelta(days=1)
+
     return total
 
 
-def min_nights_required(checkin: date, checkout: date, minimum_stay_periods: list) -> int:
-    """Minimum nights required for a stay.
-
-    The maximum of min_nights among all minimum-stay periods whose inclusive
-    start_date/end_date covers any night of the stay. Returns 0 when no period
-    touches the stay (no minimum-stay constraint).
-    """
+def min_nights_required(checkin: date, checkout: date, minimum_stay_periods: List[Dict[str, Any]]) -> int:
     required = 0
-    for period in minimum_stay_periods:
-        start = date.fromisoformat(period["start_date"])
-        end = date.fromisoformat(period["end_date"])
-        if any(start <= night <= end for night in _nights(checkin, checkout)):
-            required = max(required, period["min_nights"])
+    current = checkin
+    while current < checkout:
+        for period in minimum_stay_periods:
+            s, e = _inclusive_dates(period["start_date"], period["end_date"])
+            if s <= current <= e:
+                if period["min_nights"] > required:
+                    required = period["min_nights"]
+        current += timedelta(days=1)
+
     return required
