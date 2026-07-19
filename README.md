@@ -130,21 +130,30 @@ uvicorn core.main:app --reload
 
 ### 4. Expose for WhatsApp (Local Development)
 
-WhatsApp needs a public URL to send messages to. If you are running the app on your local computer, you must expose your local port `8000` to the internet using [ngrok](https://ngrok.com/).
+WhatsApp requires a public HTTPS URL to deliver incoming messages (webhooks). If you are running the app on your local computer, you must expose your local port `8000` to the internet using [ngrok](https://ngrok.com/).
 
-In a **second terminal window** (keep the `uvicorn` one running!), run:
+#### Step-by-step for ngrok:
+1. **Sign up**: Go to [ngrok.com](https://ngrok.com/) and create a free account.
+2. **Install**: Download and install the ngrok agent for your operating system.
+3. **Authenticate**: Get your Authtoken from the ngrok dashboard and run:
+   ```bash
+   ngrok config add-authtoken <YOUR_AUTHTOKEN>
+   ```
+4. **Run**: In a **second terminal window** (keep the `uvicorn` one running!), run:
+   ```bash
+   ngrok http 8000
+   ```
 
-```bash
-ngrok http 8000
-```
+Ngrok will provide a "Forwarding" public URL (e.g., `https://a1b2c3d4.ngrok.app`). **Leave this terminal open too.**
 
-Ngrok will give you a public URL (e.g., `https://a1b2c3d4.ngrok.app`). **Leave this terminal open too.**
-
+#### Configure the Meta webhook:
 Set the webhook URL in the [Meta Developer Portal](https://developers.facebook.com/) -> WhatsApp -> Configuration:
-- **Callback URL**: `https://your-ngrok-url.ngrok.app/webhook`
+- **Callback URL**: `https://your-ngrok-url.ngrok.app/webhook` (append `/webhook` to the ngrok URL)
 - **Verify token**: The exact string you set as `WHATSAPP_VERIFY_TOKEN` in your `.env` file.
+- Click "Verify and Save". Meta will send a test ping to your server.
+- **Webhooks Fields**: Click "Manage" under Webhooks fields, and subscribe to the `messages` event.
 
-*Note for Production: In a real environment, you will not use ngrok. You will deploy the app to a server (like Railway, Render, or a VPS) where it runs 24/7 with a permanent URL.*
+*Note for Production: The free ngrok URL changes every time you restart it. In a real environment, you will not use ngrok. You will deploy the app to a server (like Railway, Render, or a VPS) where it runs 24/7 with a permanent URL.*
 
 ---
 
