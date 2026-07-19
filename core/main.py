@@ -13,6 +13,7 @@ from core.history import get_history
 from core.transcribe import transcribe_audio
 from core.whatsapp import WhatsAppClient, validate_webhook_signature
 from modules.booking.calendar import CalendarClient
+from modules.booking.ota_sync import sync_ota
 import stripe
 from modules.approval.workflow import is_approver, handle_approval_message
 from reminders.scheduler import send_reminders
@@ -859,3 +860,16 @@ async def trigger_reminders(request: Request):
 
     sent = await send_reminders(CONFIG, cal._service, WA)
     return {"sent": sent}
+
+@app.post("/internal/sync-ota")
+async def trigger_sync_ota(request: Request):
+    secret = request.headers.get("X-Internal-Secret", "")
+    if secret != INTERNAL_SECRET:
+        raise HTTPException(status_code=403)
+
+    cal = _get_calendar_client()
+    if cal is None:
+        return {"error": "booking module disabled"}
+
+    await sync_ota(CONFIG, cal)
+    return {"status": "ok"}
