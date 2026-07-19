@@ -139,6 +139,7 @@ WhatsApp requires a public HTTPS URL to deliver incoming messages (webhooks). If
    ```bash
    ngrok config add-authtoken <YOUR_AUTHTOKEN>
    ```
+   *(Note: You do NOT need to put this token in your `.env` file. Ngrok saves it globally on your computer.)*
 4. **Run**: In a **second terminal window** (keep the `uvicorn` one running!), run:
    ```bash
    ngrok http 8000
