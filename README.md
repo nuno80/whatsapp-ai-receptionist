@@ -171,7 +171,16 @@ Set the webhook URL in the [Meta Developer Portal](https://developers.facebook.c
 - Click "Verify and Save". Meta will send a test ping to your server.
 - **Webhooks Fields**: Click "Manage" under Webhooks fields, and subscribe to the `messages` event.
 
-*Note for Production: The free ngrok URL changes every time you restart it. In a real environment, you will not use ngrok. You will deploy the app to a server (like Railway, Render, or a VPS) where it runs 24/7 with a permanent URL.*
+### 5. Production Deployment (VPS)
+
+Railway is no longer the primary deployment path. The application runs via `docker compose` with Caddy as a reverse proxy for automatic HTTPS.
+
+1. Point your domain to your VPS IP address.
+2. Clone the repository on your VPS.
+3. Configure your `.env` file (set `DOMAIN=yourdomain.com`).
+4. Run: `docker compose up -d`
+
+See the full [ops-checklist.md](ops-checklist.md) for step-by-step instructions on DNS, Google Service Accounts, Stripe Webhooks, and Meta configuration.
 
 ---
 

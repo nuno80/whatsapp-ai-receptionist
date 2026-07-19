@@ -1,0 +1,4 @@
+# Replace DOMAIN with your actual public domain
+{$DOMAIN:localhost} {
+    reverse_proxy app:8000
+}
