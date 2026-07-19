@@ -108,6 +108,31 @@ async def test_handle_approval_claim_wins_no(mock_redis, mock_config, mock_whats
     assert "non possiamo ospitarti" in guest_call.kwargs['text']
 
 @pytest.mark.asyncio
+async def test_handle_approval_cancel_wins_ok(mock_redis, mock_config, mock_whatsapp, mocker):
+    mock_redis.keys = AsyncMock(return_value=[b"approval:r123"])
+    mock_redis.setnx = AsyncMock(return_value=True) # Claim won
+    mock_redis.delete = AsyncMock(return_value=1)
+    
+    mock_cal = MagicMock()
+    mocker.patch("modules.approval.workflow._get_calendar_client", return_value=mock_cal)
+    
+    mock_config["booking"] = {"cancellation_policy": {"free_cancellation_days_before": 7}}
+    
+    mock_redis.get = AsyncMock(return_value=b'{"type": "cancel", "guest_phone": "+1234", "event_id": "event_1", "checkin_str": "Monday March 16, 2030"}')
+    
+    result = await handle_approval_message(mock_redis, mock_config, mock_whatsapp, "+393000000001", "OK r123")
+    
+    assert result == "approved"
+    mock_redis.setnx.assert_called_with("approval:claim:r123", "Anna")
+    
+    # Calendar event deleted
+    mock_cal.delete_event.assert_called_with("event_1")
+    
+    # Guest notified about free cancellation
+    guest_call = [call for call in mock_whatsapp.send_message.call_args_list if call.kwargs['to'] == '+1234'][0]
+    assert "gratuita" in guest_call.kwargs['text']
+    assert "confermata" in guest_call.kwargs['text']
+@pytest.mark.asyncio
 async def test_handle_approval_claim_loses(mock_redis, mock_config, mock_whatsapp):
     mock_redis.keys = AsyncMock(return_value=[b"approval:r123"])
     

@@ -619,7 +619,7 @@ async def _handle_cancellation_request(phone: str, visible_response: str):
 
 
 async def _handle_cancellation_confirmed(phone: str, intent: dict, visible_response: str):
-    """User confirmed cancellation — delete the event."""
+    """User confirmed cancellation — request approval."""
     cal = _get_calendar_client()
     if cal is None:
         await WA.send_text(phone, "The booking module is not available.")
@@ -647,16 +647,41 @@ async def _handle_cancellation_confirmed(phone: str, intent: dict, visible_respo
     event = events[event_index - 1]
 
     try:
-        cal.delete_event(event["id"])
+        from modules.approval.workflow import create_request
+        redis_client = _get_pending_payment_redis()
+        
+        # Create cancellation approval request
+        # Parse the checkin date from the start time or use the English date string loosely
+        # For simplicity we extract it from description which may have what we need, or from 'date'
+        from datetime import datetime
+        import pytz
+        tz = pytz.timezone(CONFIG["client"]["timezone"])
+        # Format date as human-readable English was done in calendar list. Let's just pass the string.
+        
+        request_data = {
+            "type": "cancel",
+            "guest_phone": phone,
+            "guest_name": "Ospite",  # Could extract from summary
+            "event_id": event["id"],
+            "summary": event.get("summary", ""),
+            "dates": f"{event.get('date')} at {event.get('time')}",
+            "checkin_str": event.get("date"), # Need enough to check free cancellation policy later
+            "total": 0, # Don't care for cancel display
+            "lang": _get_guest_lang(phone)
+        }
+        
+        await create_request(redis_client, CONFIG, WA, request_data)
+        
         _delete_pending_cancellation(phone)
+        
         msg = (
-            f"Appointment cancelled: *{event['summary']}* on {event['date']} at {event['time']}.\n\n"
-            f"If you'd like to book another appointment, just message us."
+            f"La tua richiesta di cancellazione per *{event['summary']}* del {event['date']} è stata inviata per l'approvazione. "
+            f"Ti avviseremo non appena verrà confermata."
         )
-        logger.info("Event cancelled: %s for phone %s", event["id"], phone)
+        logger.info("Cancellation request created for event: %s for phone %s", event["id"], phone)
     except Exception as e:
-        logger.error("Failed to cancel event: %s", e)
-        msg = "There was a problem cancelling the appointment. Please contact us directly."
+        logger.error("Failed to create cancellation request: %s", e)
+        msg = "C'è stato un problema nel processare la richiesta. Per favore contattaci direttamente."
 
     HISTORY.add(phone, "assistant", msg)
     await WA.send_text(phone, msg)

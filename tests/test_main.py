@@ -139,3 +139,56 @@ def test_booking_intent_creates_approval_request(mocker, bypass_webhook_verifica
     
     # Guest is notified
     assert mock_send.called
+
+def test_cancellation_intent_creates_approval_request(mocker, bypass_webhook_verification, mock_redis_env):
+    """When a guest confirms cancellation, it creates an approval request and doesn't auto-delete."""
+    mocker.patch("core.main.CONFIG", {
+        "client": {"name": "Test", "timezone": "Europe/Rome"},
+        "modules": {"booking": True},
+        "booking": {
+            "calendar_id": "test",
+            "calendar_owner_email": "test@test.com"
+        },
+        "authorized_approvers": [{"phone": "+393000000001", "name": "Anna"}]
+    })
+    mock_calendar = mocker.MagicMock()
+    mocker.patch("core.main._get_calendar_client", return_value=mock_calendar)
+
+    # User already has a pending cancellation context
+    mocker.patch("core.main._get_pending_cancellation", return_value=[
+        {"id": "evt123", "summary": "Stay", "date": "Monday March 16, 2030", "time": "15:00"}
+    ])
+
+    mock_send = mocker.patch("core.main.WA.send_text", new_callable=mocker.AsyncMock)
+    mock_create_req = mocker.patch("modules.approval.workflow.create_request", new_callable=mocker.AsyncMock, return_value="1234")
+
+    # AI returns cancellation_confirmed
+    mocker.patch("core.main.get_ai_response", return_value=(
+        'Ho richiesto la cancellazione. {"intent": "cancellation_confirmed", "event_index": 1}'
+    ))
+
+    mocker.patch("core.main._acquire_message_lock", return_value=True)
+
+    body = json.dumps({"entry": [{"changes": [{"value": {"messages": [
+        {"from": "393331234567", "type": "text", "text": {"body": "Confermo, cancella."}}
+    ]}}]}]}).encode()
+    sig = "sha256=" + hmac.new(b"appsecret", body, hashlib.sha256).hexdigest()
+
+    test_client = TestClient(app)
+    resp = test_client.post("/webhook", content=body,
+        headers={"X-Hub-Signature-256": sig, "Content-Type": "application/json"})
+
+    assert resp.status_code == 200
+
+    # Calendar event is NOT deleted automatically
+    mock_calendar.delete_event.assert_not_called()
+
+    # Approval request is created
+    mock_create_req.assert_called_once()
+    
+    args = mock_create_req.call_args[0][3]
+    assert args["type"] == "cancel"
+    assert args["event_id"] == "evt123"
+
+    # Guest is notified
+    assert mock_send.called

@@ -34,9 +34,9 @@ async def create_request(redis_client: redis.Redis, config: dict, whatsapp_clien
     await redis_client.set(f"approval:{req_id}", json.dumps(data))
     
     text = (
-        f"Nuova richiesta {req_id}:\n"
+        f"Nuova richiesta {req_id} ({data.get('type')}):\n"
         f"Da: {data.get('guest_name')} ({data.get('guest_phone')})\n"
-        f"Dal: {data.get('checkin')} al {data.get('checkout')}\n"
+        f"Dal: {data.get('checkin', data.get('dates'))} al {data.get('checkout', '')}\n"
         f"Ospiti: {data.get('guests', 1)}\n"
         f"Totale: {data.get('total')}\n\n"
         f"Rispondi con OK {req_id} o NO {req_id}"
@@ -94,7 +94,9 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
         guest_phone = req_data.get("guest_phone")
         
         cal = _get_calendar_client(config)
-        if cal and "checkin" in req_data and "checkout" in req_data:
+        req_type = req_data.get("type", "create")
+        
+        if req_type == "create" and cal and "checkin" in req_data and "checkout" in req_data:
             checkin = date.fromisoformat(req_data["checkin"])
             checkout = date.fromisoformat(req_data["checkout"])
             
@@ -113,7 +115,52 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
                     request_id=req_id
                 )
 
-        if guest_phone:
+        if req_type == "cancel" and cal and "event_id" in req_data:
+            if action == "OK":
+                cal.delete_event(req_data["event_id"])
+                
+                # Check cancellation policy
+                free_days = config.get("booking", {}).get("cancellation_policy", {}).get("free_cancellation_days_before", 0)
+                is_free = False
+                
+                checkin_str = req_data.get("checkin_str")
+                if checkin_str:
+                    try:
+                        import pytz
+                        from datetime import datetime, date as date_cls
+                        tz = pytz.timezone(config.get("client", {}).get("timezone", "UTC"))
+                        today = datetime.now(tz).date()
+                        
+                        # Parse the custom date string from find_upcoming_events_by_phone
+                        # Format is like "Monday January 1, 2026"
+                        import re
+                        months = {"January": 1, "February": 2, "March": 3, "April": 4, "May": 5, "June": 6, "July": 7, "August": 8, "September": 9, "October": 10, "November": 11, "December": 12}
+                        match = re.search(r'([A-Z][a-z]+) (\d+), (\d{4})', checkin_str)
+                        if match:
+                            month_name, day, year = match.groups()
+                            checkin_date = date_cls(int(year), months[month_name], int(day))
+                            if (checkin_date - today).days >= free_days:
+                                is_free = True
+                        else:
+                            # Try to parse standard iso format just in case
+                            try:
+                                checkin_date = date_cls.fromisoformat(checkin_str)
+                                if (checkin_date - today).days >= free_days:
+                                    is_free = True
+                            except ValueError:
+                                pass
+                    except Exception:
+                        pass
+                        
+                policy_msg = "La cancellazione è gratuita in base ai termini." if is_free else "Verrà applicata la penale di cancellazione come da termini del soggiorno."
+                
+                if guest_phone:
+                    await whatsapp_client.send_message(to=guest_phone, text=f"La tua cancellazione è stata confermata.\n{policy_msg}")
+            else:
+                if guest_phone:
+                    await whatsapp_client.send_message(to=guest_phone, text="La tua richiesta di cancellazione non è stata approvata. Il soggiorno rimane confermato.")
+
+        if guest_phone and req_type == "create":
             if action == "OK":
                 await whatsapp_client.send_message(to=guest_phone, text="Richiesta confermata! Confermata")
             else:
