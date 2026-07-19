@@ -13,7 +13,7 @@ from core.history import get_history
 from core.transcribe import transcribe_audio
 from core.whatsapp import WhatsAppClient, validate_webhook_signature
 from modules.booking.calendar import CalendarClient
-from modules.payments.mercadopago import MPClient, validate_mp_signature
+import stripe
 from modules.approval.workflow import is_approver, handle_approval_message
 from reminders.scheduler import send_reminders
 
@@ -32,7 +32,9 @@ INTERNAL_SECRET = os.environ.get("INTERNAL_SECRET", "")
 MP_WEBHOOK_SECRET = os.environ.get("MP_WEBHOOK_SECRET", "")
 
 _calendar_client: CalendarClient | None = None
-_mp_client: MPClient | None = None
+from modules.payments.stripe_client import StripeClient
+
+_stripe_client: StripeClient | None = None
 _pending_redis = None
 
 # In-memory fallback for pending operations (used when Redis is not available)
@@ -44,14 +46,14 @@ _message_locks: dict[str, float] = {}  # phone -> lock expiry timestamp
 _MODIFICATION_KEYWORDS = {"change", "modify", "move", "reschedule", "switch", "postpone", "cambiar", "modificar", "mover", "reprogramar"}
 
 
-def _get_mp_client() -> MPClient | None:
+def _get_stripe_client():
     if not CONFIG.get("modules", {}).get("payments"):
         return None
-    global _mp_client
-    if _mp_client is None:
-        sandbox = CONFIG.get("payments", {}).get("sandbox", True)
-        _mp_client = MPClient(sandbox=sandbox)
-    return _mp_client
+    global _stripe_client
+    if _stripe_client is None:
+        from modules.payments.stripe_client import StripeClient
+        _stripe_client = StripeClient()
+    return _stripe_client
 
 
 def _get_pending_payment_redis():
@@ -506,73 +508,65 @@ async def _handle_booking_requested(phone: str, intent: dict, visible_response: 
 @app.post("/payments/webhook")
 async def payment_webhook(request: Request):
     body = await request.body()
-    x_signature = request.headers.get("X-Signature", "")
+    sig_header = request.headers.get("stripe-signature", "")
+    
+    secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 
-    # In sandbox mode, skip signature validation for easier testing
-    sandbox = CONFIG.get("payments", {}).get("sandbox", True)
-    if not sandbox and MP_WEBHOOK_SECRET:
-        if not validate_mp_signature(body, x_signature, MP_WEBHOOK_SECRET):
-            raise HTTPException(status_code=403, detail="Invalid MP signature")
+    if secret:
+        from modules.payments.stripe_client import validate_stripe_signature
+        if not validate_stripe_signature(body, sig_header, secret):
+            raise HTTPException(status_code=403, detail="Invalid Stripe signature")
 
-    data = await request.json()
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    if data.get("action") != "payment.updated":
+    if data.get("type") != "checkout.session.completed":
         return Response(status_code=200)
 
-    payment_id = str(data.get("data", {}).get("id", ""))
-    if not payment_id:
+    session = data.get("data", {}).get("object", {})
+    payment_status = session.get("payment_status")
+    
+    if payment_status != "paid":
         return Response(status_code=200)
 
-    mp = _get_mp_client()
-    if not mp:
+    reference = session.get("client_reference_id")
+    if not reference:
         return Response(status_code=200)
 
-    payment = mp.get_payment(payment_id)
-    pending = _get_and_delete_pending_payment(payment)
+    # Reference is the Stay/Event ID
+    cal = _get_calendar_client()
+    if cal:
+        # Mark as paid and get guest phone
+        try:
+            event = cal._service.events().get(
+                calendarId=cal.calendar_id, 
+                eventId=reference
+            ).execute()
+            
+            # Find phone from description or extendedProperties
+            guest_phone = None
+            if "extendedProperties" in event and "private" in event["extendedProperties"]:
+                guest_phone = event["extendedProperties"]["private"].get("guest_phone")
+                
+            # Update payment state in title
+            summary = event.get("summary", "")
+            if "[PENDING PAYMENT]" in summary:
+                new_summary = summary.replace("[PENDING PAYMENT]", "").strip()
+                cal._service.events().patch(
+                    calendarId=cal.calendar_id,
+                    eventId=reference,
+                    body={"summary": new_summary}
+                ).execute()
 
-    if not pending:
-        return Response(status_code=200)
-
-    phone = pending["phone"]
-
-    if payment.get("status") == "approved":
-        cal = _get_calendar_client()
-        if cal:
-            booking_date = date.fromisoformat(pending["date"])
-            booking_time = dt_time.fromisoformat(pending["time"])
-            # TODO: Range refactor - slot removed
-            from dataclasses import dataclass
-            @dataclass
-            class Slot:
-                date: date
-                start_time: dt_time
-                location: str
-            slot = Slot(date=booking_date, start_time=booking_time, location=pending["location"])
-            cal.create_event(
-                service_name=pending["service"],
-                user_name=pending["user_name"],
-                user_phone=phone,
-                slot=slot,
-                duration_minutes=pending["duration_minutes"],
-                location_address=pending["location_address"],
-                price=pending["price"],
-                cancellation_policy=CONFIG["booking"].get("cancellation_policy", ""),
-            )
-            cal.release_slot(booking_date, booking_time)
-        confirmation = (
-            f"Your payment has been confirmed. Appointment booked: {pending['service']} "
-            f"on {pending['date']} at {pending['time']} at {pending['location_address']}. "
-            f"See you there!"
-        )
-        await WA.send_text(phone, confirmation)
-    else:
-        cal = _get_calendar_client()
-        if cal:
-            cal.release_slot(
-                date.fromisoformat(pending["date"]),
-                dt_time.fromisoformat(pending["time"])
-            )
-        await WA.send_text(phone, "The payment was not processed. If you'd like to try again, message us.")
+            if guest_phone:
+                await WA.send_text(
+                    guest_phone, 
+                    "Il tuo pagamento è stato ricevuto con successo. La prenotazione è ora completamente confermata! Grazie."
+                )
+        except Exception as e:
+            logger.error("Failed to process payment for event %s: %s", reference, e)
 
     return Response(status_code=200)
 

@@ -134,17 +134,51 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
             cal.release_range(checkin, checkout)
             
             if action == "OK":
-                cal.create_event(
+                total = req_data.get("total", 0)
+                payment_state = "paid"
+                payment_mode = config.get("payments", {}).get("mode", "full_on_site")
+                
+                if config.get("modules", {}).get("payments") and payment_mode != "full_on_site":
+                    payment_state = "pending"
+                    
+                event_id = cal.create_event(
                     checkin_date=checkin,
                     checkout_date=checkout,
                     guest_name=req_data.get("guest_name", "Ospite"),
                     guest_phone=guest_phone,
                     guests_count=req_data.get("guests", 1),
-                    total_price=req_data.get("total", 0),
+                    total_price=total,
                     language=req_data.get("lang", "it"),
-                    payment_state="pending",
+                    payment_state=payment_state,
                     request_id=req_id
                 )
+                
+                if guest_phone:
+                    if payment_state == "pending":
+                        amount_eur = total
+                        if payment_mode == "deposit":
+                            pct = config.get("payments", {}).get("deposit_percentage", 50)
+                            amount_eur = total * (pct / 100)
+                            
+                        from modules.payments.stripe_client import StripeClient
+                        stripe_client = StripeClient()
+                        link = stripe_client.create_payment_link(
+                            amount_eur=amount_eur,
+                            description=f"Soggiorno B&B - {req_data.get('guest_name', 'Ospite')}",
+                            reference=event_id
+                        )
+                        
+                        if payment_mode == "deposit":
+                            msg = f"Richiesta confermata! Per bloccare definitivamente le date, è richiesto un anticipo di €{amount_eur:.2f}. Clicca qui per pagare: {link}"
+                        else:
+                            msg = f"Richiesta confermata! Per completare la prenotazione, effettua il pagamento di €{amount_eur:.2f}. Clicca qui: {link}"
+                            
+                        await whatsapp_client.send_message(to=guest_phone, text=msg)
+                    else:
+                        await whatsapp_client.send_message(to=guest_phone, text="Richiesta confermata! Confermata")
+            else:
+                if guest_phone:
+                    await whatsapp_client.send_message(to=guest_phone, text="Purtroppo non possiamo ospitarti per quelle date.")
 
         if req_type == "cancel" and cal and "event_id" in req_data:
             if action == "OK":
@@ -191,11 +225,7 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
                 if guest_phone:
                     await whatsapp_client.send_message(to=guest_phone, text="La tua richiesta di cancellazione non è stata approvata. Il soggiorno rimane confermato.")
 
-        if guest_phone and req_type == "create":
-            if action == "OK":
-                await whatsapp_client.send_message(to=guest_phone, text="Richiesta confermata! Confermata")
-            else:
-                await whatsapp_client.send_message(to=guest_phone, text="Purtroppo non possiamo ospitarti per quelle date.")
+
                 
     # Notify other approvers
     for approver in config.get("authorized_approvers", []):
