@@ -173,7 +173,9 @@ Set the webhook URL in the [Meta Developer Portal](https://developers.facebook.c
 
 ### 5. Production Deployment (VPS)
 
-Railway is no longer the primary deployment path. The application runs via `docker compose` with Caddy as a reverse proxy for automatic HTTPS.
+Docker is used exclusively for deploying the app to a production server (VPS) where it must run 24/7. **You do not need Docker for local testing or development.**
+
+The application runs via `docker compose` which seamlessly orchestrates the Python backend, a Redis instance for robust locking/state persistence, and Caddy as a reverse proxy for automatic HTTPS TLS certificates (required by Meta & Stripe webhooks).
 
 1. Point your domain to your VPS IP address.
 2. Clone the repository on your VPS.
