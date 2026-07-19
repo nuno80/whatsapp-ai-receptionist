@@ -37,12 +37,9 @@ def test_build_system_prompt_with_booking():
         "client": {"name": "Test"},
         "modules": {"booking": True, "payments": False},
         "booking": {
-            "services": [{"name": "Dental Cleaning", "price": 150, "duration_minutes": 45}],
-            "locations": [{"name": "Downtown Office", "address": "456 Oak Avenue, Springfield", "days": ["monday"]}],
-            "business_hours": {"start": "09:00", "end": "18:00"},
-            "cancellation_policy": "24 hours in advance",
+            "max_guests": 2,
+            "min_stay_nights": 2,
         }
     }
     prompt = build_system_prompt(config, "knowledge")
-    assert "booking_confirmed" in prompt
-    assert "Dental Cleaning" in prompt
+    assert "booking_requested" in prompt

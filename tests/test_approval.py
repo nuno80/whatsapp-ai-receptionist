@@ -57,21 +57,55 @@ async def test_handle_approval_multiple_pending_requires_id(mock_redis, mock_con
     mock_redis.setnx.assert_not_called()
 
 @pytest.mark.asyncio
-async def test_handle_approval_claim_wins(mock_redis, mock_config, mock_whatsapp):
+async def test_handle_approval_claim_wins_ok(mock_redis, mock_config, mock_whatsapp, mocker):
     mock_redis.keys = AsyncMock(return_value=[b"approval:r123"])
-    mock_redis.get = AsyncMock(return_value=b'{"type": "create", "guest_phone": "+1234"}')
+    mock_redis.get = AsyncMock(return_value=b'{"type": "create", "guest_phone": "+1234", "checkin": "2026-03-16", "checkout": "2026-03-18", "guests": 2, "total": 200, "lang": "it", "guest_name": "Jane"}')
     mock_redis.setnx = AsyncMock(return_value=True) # Claim won
     mock_redis.delete = AsyncMock(return_value=1)
+    
+    mock_cal = MagicMock()
+    mocker.patch("modules.approval.workflow._get_calendar_client", return_value=mock_cal)
     
     result = await handle_approval_message(mock_redis, mock_config, mock_whatsapp, "+393000000001", "OK r123")
     
     assert result == "approved"
     mock_redis.setnx.assert_called_with("approval:claim:r123", "Anna")
     
+    # Calendar event created
+    mock_cal.create_event.assert_called_once()
+    # Soft lock released
+    mock_cal.release_range.assert_called_once()
+    
     # Guest notified
-    mock_whatsapp.send_message.assert_any_call(to="+1234", text=pytest.approx("Richiesta confermata!"))
+    guest_call = [call for call in mock_whatsapp.send_message.call_args_list if call.kwargs['to'] == '+1234'][0]
+    assert "Confermata" in guest_call.kwargs['text']
+    
     # Other approver notified
-    mock_whatsapp.send_message.assert_any_call(to="+393000000002", text=pytest.approx("Richiesta r123 gestita da Anna."))
+    other_call = [call for call in mock_whatsapp.send_message.call_args_list if call.kwargs['to'] == '+393000000002'][0]
+    assert "approvata da Anna" in other_call.kwargs['text']
+
+@pytest.mark.asyncio
+async def test_handle_approval_claim_wins_no(mock_redis, mock_config, mock_whatsapp, mocker):
+    mock_redis.keys = AsyncMock(return_value=[b"approval:r123"])
+    mock_redis.get = AsyncMock(return_value=b'{"type": "create", "guest_phone": "+1234", "checkin": "2026-03-16", "checkout": "2026-03-18"}')
+    mock_redis.setnx = AsyncMock(return_value=True) # Claim won
+    mock_redis.delete = AsyncMock(return_value=1)
+    
+    mock_cal = MagicMock()
+    mocker.patch("modules.approval.workflow._get_calendar_client", return_value=mock_cal)
+    
+    result = await handle_approval_message(mock_redis, mock_config, mock_whatsapp, "+393000000001", "NO r123")
+    
+    assert result == "rejected"
+    
+    # Calendar event NOT created
+    mock_cal.create_event.assert_not_called()
+    # Soft lock released
+    mock_cal.release_range.assert_called_once()
+    
+    # Guest notified
+    guest_call = [call for call in mock_whatsapp.send_message.call_args_list if call.kwargs['to'] == '+1234'][0]
+    assert "non possiamo ospitarti" in guest_call.kwargs['text']
 
 @pytest.mark.asyncio
 async def test_handle_approval_claim_loses(mock_redis, mock_config, mock_whatsapp):

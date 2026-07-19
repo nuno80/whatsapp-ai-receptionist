@@ -3,6 +3,7 @@ import json
 import hashlib
 import hmac
 import pytest
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("ANTHROPIC_API_KEY", "test")
@@ -18,6 +19,13 @@ from core.main import app
 
 client = TestClient(app)
 
+@pytest.fixture()
+def bypass_webhook_verification(monkeypatch, mocker):
+    monkeypatch.setenv("WHATSAPP_VERIFY_TOKEN", "mytoken")
+    monkeypatch.setenv("WHATSAPP_APP_SECRET", "appsecret")
+    mocker.patch("core.main.VERIFY_TOKEN", "mytoken")
+    mocker.patch("core.main.validate_webhook_signature", return_value=True)
+
 
 def test_health_check():
     resp = client.get("/")
@@ -25,7 +33,8 @@ def test_health_check():
     assert resp.json()["status"] == "ok"
 
 
-def test_webhook_verification():
+def test_webhook_verification(mocker):
+    mocker.patch("core.main.VERIFY_TOKEN", "mytoken")
     resp = client.get("/webhook", params={
         "hub.mode": "subscribe",
         "hub.verify_token": "mytoken",
@@ -35,7 +44,8 @@ def test_webhook_verification():
     assert resp.text == "12345"
 
 
-def test_webhook_verification_wrong_token():
+def test_webhook_verification_wrong_token(mocker):
+    mocker.patch("core.main.VERIFY_TOKEN", "mytoken")
     resp = client.get("/webhook", params={
         "hub.mode": "subscribe",
         "hub.verify_token": "wrong",
@@ -44,7 +54,8 @@ def test_webhook_verification_wrong_token():
     assert resp.status_code == 403
 
 
-def test_webhook_invalid_signature():
+def test_webhook_invalid_signature(mocker):
+    mocker.patch("core.main.validate_webhook_signature", return_value=False)
     resp = client.post(
         "/webhook",
         content=b'{"test": "data"}',
@@ -53,7 +64,8 @@ def test_webhook_invalid_signature():
     assert resp.status_code == 403
 
 
-def test_webhook_status_update_ignored():
+def test_webhook_status_update_ignored(mocker):
+    mocker.patch("core.main.validate_webhook_signature", return_value=True)
     body = json.dumps({
         "entry": [{"changes": [{"value": {"statuses": [{"status": "delivered"}]}}]}]
     }).encode()
@@ -66,43 +78,60 @@ def test_webhook_status_update_ignored():
     assert resp.status_code == 200
 
 
-def test_booking_intent_creates_event_without_payments(mocker):
-    """When payments are disabled, booking intent creates calendar event immediately."""
+@pytest.fixture()
+def mock_redis_env(mocker):
+    mock = mocker.MagicMock()
+    mock.get.return_value = None
+    mocker.patch("core.main._get_pending_payment_redis", return_value=mock)
+
+def test_booking_intent_creates_approval_request(mocker, bypass_webhook_verification, mock_redis_env):
+    """When a guest requests a booking, it creates an approval request and a soft lock, NOT a calendar event."""
     mocker.patch("core.main.CONFIG", {
-        "client": {"name": "Test", "timezone": "America/Argentina/Buenos_Aires"},
+        "client": {"name": "Test", "timezone": "Europe/Rome"},
         "modules": {"booking": True, "payments": False, "reminders": False},
         "booking": {
             "calendar_id": "test",
             "calendar_owner_email": "test@test.com",
-            "business_hours": {"start": "09:00", "end": "18:00"},
-            "services": [{"name": "Dental Cleaning", "price": 150, "duration_minutes": 45}],
-            "locations": [{"name": "Downtown Office", "address": "456 Oak Avenue, Springfield", "days": ["monday"]}],
-            "cancellation_policy": "24 hours in advance",
-        }
+            "max_guests": 2,
+            "min_stay_nights": 2,
+            "prices": {"default": 100}
+        },
+        "authorized_approvers": [{"phone": "+393000000001", "name": "Anna"}]
     })
     mock_calendar = mocker.MagicMock()
-    mock_calendar.is_slot_available.return_value = True
+    mock_calendar.is_range_available.return_value = True
     mocker.patch("core.main._get_calendar_client", return_value=mock_calendar)
+    
     mock_send = mocker.patch("core.main.WA.send_text", new_callable=mocker.AsyncMock)
+    mock_create_req = mocker.patch("modules.approval.workflow.create_request", new_callable=mocker.AsyncMock, return_value="1234")
+    
+    # AI returns the requested booking
     mocker.patch("core.main.get_ai_response", return_value=(
-        'Your appointment is confirmed. {"intent": "booking_confirmed", "service": "Dental Cleaning", '
-        '"date": "2027-03-16", "time": "10:00", "location": "Downtown Office", "user_name": "Jane"}'
+        'Attendi conferma. {"intent": "booking_requested", '
+        '"checkin": "2027-03-16", "checkout": "2027-03-18", "guests": 2, "user_name": "Jane", "lang": "it"}'
     ))
 
-    import json
-    import hashlib
-    import hmac
+    mocker.patch("core.main._acquire_message_lock", return_value=True)
+    
     body = json.dumps({"entry": [{"changes": [{"value": {"messages": [
-        {"from": "5491112345678", "type": "text", "text": {"body": "I want to book"}}
+        {"from": "393331234567", "type": "text", "text": {"body": "I want to book"}}
     ]}}]}]}).encode()
     sig = "sha256=" + hmac.new(b"appsecret", body, hashlib.sha256).hexdigest()
 
-    from fastapi.testclient import TestClient
-    from core.main import app
     test_client = TestClient(app)
     resp = test_client.post("/webhook", content=body,
         headers={"X-Hub-Signature-256": sig, "Content-Type": "application/json"})
 
     assert resp.status_code == 200
-    mock_calendar.create_event.assert_called_once()
+    
+    # Calendar event is NOT created
+    mock_calendar.create_event.assert_not_called()
+    
+    # Soft lock is created
+    mock_calendar.lock_range.assert_called_once()
+    
+    # Approval request is created
+    mock_create_req.assert_called_once()
+    
+    # Guest is notified
     assert mock_send.called

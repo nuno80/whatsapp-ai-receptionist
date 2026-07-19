@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 
 from config.loader import load_config
-from core.ai import extract_booking_intent, get_ai_response, load_knowledge
+from core.ai import extract_intent, get_ai_response, load_knowledge
 from core.history import get_history
 from core.transcribe import transcribe_audio
 from core.whatsapp import WhatsAppClient, validate_webhook_signature
@@ -362,7 +362,7 @@ async def _process_message(phone: str, user_text: str):
     )
 
     # Check for intent
-    intent, visible_response = extract_booking_intent(ai_response)
+    intent, visible_response = extract_intent(ai_response)
 
     if intent:
         if "lang" in intent:
@@ -372,8 +372,8 @@ async def _process_message(phone: str, user_text: str):
             intent_type = intent.get("intent", "")
             logger.info("Intent detected: %s", intent)
 
-            if intent_type == "booking_confirmed":
-                await _handle_booking_intent(phone, intent, visible_response)
+            if intent_type == "booking_requested":
+                await _handle_booking_requested(phone, intent, visible_response)
             elif intent_type == "cancellation_request":
                 await _handle_cancellation_request(phone, visible_response)
             elif intent_type == "cancellation_confirmed":
@@ -405,8 +405,8 @@ def _conversation_suggests_modification(history: list[dict]) -> bool:
     return False
 
 
-async def _handle_booking_intent(phone: str, intent: dict, visible_response: str):
-    """Process a confirmed booking intent."""
+async def _handle_booking_requested(phone: str, intent: dict, visible_response: str):
+    """Process a requested booking intent."""
     cal = _get_calendar_client()
     if cal is None:
         HISTORY.add(phone, "assistant", visible_response)
@@ -414,142 +414,81 @@ async def _handle_booking_intent(phone: str, intent: dict, visible_response: str
         return
 
     logger.info("[INTENT] %s", intent)
-    service = _find_service(intent.get("service", ""))
-    location = _find_location(intent.get("location", ""))
-
-    if not service or not location:
-        logger.error("Service or location not found. service='%s' location='%s'", intent.get('service'), intent.get('location'))
-        error_msg = "There was a problem processing your booking. Please contact us directly."
-        HISTORY.add(phone, "assistant", error_msg)
-        await WA.send_text(phone, error_msg)
-        return
-
+    
     try:
-        booking_date = date.fromisoformat(intent["date"])
-        booking_time = dt_time.fromisoformat(intent["time"])
+        checkin_date = date.fromisoformat(intent["checkin"])
+        checkout_date = date.fromisoformat(intent["checkout"])
     except (ValueError, KeyError) as e:
-        logger.warning("Invalid date/time in intent: %s", e)
-        error_msg = "There was a problem with your booking date. Could you try again?"
+        logger.warning("Invalid date in intent: %s", e)
+        error_msg = "C'è stato un problema con le date. Puoi riprovare?"
         HISTORY.add(phone, "assistant", error_msg)
         await WA.send_text(phone, error_msg)
         return
 
-    # Validate date is not in the past
-    if booking_date < date.today():
-        logger.warning("Booking date in the past: %s", booking_date)
-        error_msg = "That date has already passed. Would you like me to suggest the next available dates?"
+    import pytz
+    from datetime import datetime
+    timezone = pytz.timezone(CONFIG["client"]["timezone"])
+    today = datetime.now(timezone).date()
+    
+    if checkin_date < today:
+        error_msg = "La data di check-in non può essere nel passato. Quali altre date cerchi?"
         HISTORY.add(phone, "assistant", error_msg)
         await WA.send_text(phone, error_msg)
         return
-
-    # TODO: Range refactor - slot removed
-    from dataclasses import dataclass
-    @dataclass
-    class Slot:
-        date: date
-        start_time: dt_time
-        location: str
-
-    slot = Slot(date=booking_date, start_time=booking_time, location=location["name"])
-
-    if not cal.is_slot_available(booking_date, booking_time, service["duration_minutes"]):
-        sorry = (
-            f"That time slot ({booking_date.strftime('%m/%d/%Y')} at {booking_time.strftime('%H:%M')}) "
-            f"is already taken. Would you like another time that same day or a different day?"
-        )
-        HISTORY.add(phone, "assistant", sorry)
-        await WA.send_text(phone, sorry)
+        
+    if checkout_date <= checkin_date:
+        error_msg = "La data di check-out deve essere successiva al check-in."
+        HISTORY.add(phone, "assistant", error_msg)
+        await WA.send_text(phone, error_msg)
         return
-
-    payments_enabled = CONFIG.get("modules", {}).get("payments", False)
-
-    # If this booking is part of a modification, delete the old event first
-    pending_mod = _get_pending_modification(phone)
-
-    # Fallback: if Haiku skipped modification_request, detect from conversation history
-    if not pending_mod:
-        history = HISTORY.get(phone)
-        if _conversation_suggests_modification(history):
-            events = cal.find_upcoming_events_by_phone(phone)
-            if events:
-                # Use the first (soonest) event as the one being modified
-                pending_mod = events[0]
-                logger.info("Modification detected from conversation context for phone %s", phone)
-
-    if pending_mod:
-        try:
-            cal.delete_event(pending_mod["id"])
-            logger.info("Old event deleted for modification: %s", pending_mod["id"])
-        except Exception as e:
-            logger.warning("Failed to delete old event during modification: %s", e)
-        _delete_pending_modification(phone)
-
-    if payments_enabled:
-        await _handle_payment_flow(phone, intent, visible_response, service, location, slot, cal)
-    else:
-        cal.create_event(
-            service_name=service["name"],
-            user_name=intent.get("user_name", ""),
-            user_phone=phone,
-            slot=slot,
-            duration_minutes=service["duration_minutes"],
-            location_address=location["address"],
-            price=service["price"],
-            cancellation_policy=CONFIG["booking"].get("cancellation_policy", ""),
-        )
-        mod_note = " (previous appointment cancelled)" if pending_mod else ""
-        confirmation = (
-            f"{visible_response}\n\n"
-            f"Appointment confirmed{mod_note}: {service['name']} on {booking_date.strftime('%m/%d/%Y')} "
-            f"at {booking_time.strftime('%H:%M')} at {location['address']}.\n\n"
-            f"Payment is due at the end of the appointment.\n\n"
-            f"Cancellation policy: Appointments can be cancelled up to "
-            f"24 hours in advance. After that period, a 40% fee will be charged."
-        )
-        HISTORY.add(phone, "assistant", confirmation)
-        await WA.send_text(phone, confirmation)
-
-
-async def _handle_payment_flow(phone, intent, visible_response, service, location, slot, cal):
-    mp = _get_mp_client()
-    if mp is None:
+        
+    nights = (checkout_date - checkin_date).days
+    min_stay = CONFIG["booking"].get("min_stay_nights", 1)
+    if nights < min_stay:
+        error_msg = f"Il soggiorno minimo è di {min_stay} notti."
+        HISTORY.add(phone, "assistant", error_msg)
+        await WA.send_text(phone, error_msg)
         return
-
-    # Lock the slot for 30 minutes
-    cal.lock_range(booking_date, booking_date + timedelta(days=1))
-
-    try:
-        pref = mp.create_preference(
-            title=service["name"],
-            price=service["price"],
-            external_reference=phone,
-        )
-    except Exception as e:
-        logger.error("MP preference creation failed: %s", e)
-        cal.release_range(booking_date, booking_date + timedelta(days=1))
-        await WA.send_text(phone, "There was an error generating the payment link. Please try again.")
+        
+    guests = intent.get("guests", 1)
+    max_guests = CONFIG["booking"].get("max_guests", 2)
+    if guests > max_guests:
+        error_msg = f"Possiamo ospitare al massimo {max_guests} persone."
+        HISTORY.add(phone, "assistant", error_msg)
+        await WA.send_text(phone, error_msg)
         return
-
-    # Store pending payment keyed by phone (= external_reference used in MP preference)
-    _save_pending_payment(phone, {
-        "phone": phone,
-        "service": service["name"],
-        "date": slot.date.isoformat(),
-        "time": slot.start_time.strftime("%H:%M"),
-        "location": location["name"],
-        "user_name": intent.get("user_name", ""),
-        "price": service["price"],
-        "duration_minutes": service["duration_minutes"],
-        "location_address": location["address"],
-    })
-
-    msg = (
-        f"{visible_response}\n\n"
-        f"To confirm your appointment, complete the payment here:\n{pref['payment_url']}\n\n"
-        f"Your appointment will be reserved once the payment is processed."
-    )
-    HISTORY.add(phone, "assistant", msg)
-    await WA.send_text(phone, msg)
+        
+    if not cal.is_range_available(checkin_date, checkout_date):
+        error_msg = f"Purtroppo le date dal {checkin_date.strftime('%d/%m')} al {checkout_date.strftime('%d/%m')} non sono disponibili. Vuoi controllare altri giorni?"
+        HISTORY.add(phone, "assistant", error_msg)
+        await WA.send_text(phone, error_msg)
+        return
+        
+    # Calculate price
+    base_price = CONFIG["booking"].get("prices", {}).get("default", 0)
+    total_price = base_price * nights
+        
+    cal.lock_range(checkin_date, checkout_date)
+    
+    from modules.approval.workflow import create_request
+    redis_client = _get_pending_payment_redis()
+    
+    request_data = {
+        "type": "create",
+        "guest_phone": phone,
+        "guest_name": intent.get("user_name", "Ospite"),
+        "checkin": checkin_date.isoformat(),
+        "checkout": checkout_date.isoformat(),
+        "guests": guests,
+        "total": total_price,
+        "lang": intent.get("lang", "it")
+    }
+    
+    await create_request(redis_client, CONFIG, WA, request_data)
+    
+    # Send pending message (we do not tell them confirmed)
+    HISTORY.add(phone, "assistant", visible_response)
+    await WA.send_text(phone, visible_response)
 
 
 @app.post("/payments/webhook")
