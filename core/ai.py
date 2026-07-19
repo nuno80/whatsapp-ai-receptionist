@@ -8,7 +8,7 @@ import anthropic
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-3-5-sonnet-20240620"
+MODEL = "claude-3-5-sonnet-20241022"
 MAX_TOKENS = 1024
 
 _client: anthropic.Anthropic | None = None
@@ -46,7 +46,7 @@ def build_system_prompt(config: dict, knowledge: str, free_ranges: list[dict] = 
         f"Tone: {tone}.",
         "Speak in the first person as the assistant, never impersonate a human host.",
         "FORMAT: Use WhatsApp formatting only. Bold with *single asterisks* (not **double**). Italics with _underscores_. No markdown headings, no #, no ``` or backticks.",
-        f"Respond in this language code: {detected_lang}.",
+        f"Respond in this language code: {detected_lang} (IT/EN/ES/FR/DE). DO NOT machine-translate.",
         "Be concise (maximum 3-4 paragraphs). Do not use emojis unless appropriate for the tone.",
     ]
 
