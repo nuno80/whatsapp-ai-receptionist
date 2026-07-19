@@ -1,8 +1,9 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from core.ai import build_system_prompt, extract_intent, load_knowledge, MODEL
+from core.ai import build_system_prompt, extract_intent, load_knowledge, MODEL, _PROVIDER
 import json
 
+@pytest.mark.skipif(_PROVIDER != "anthropic", reason="anthropic-only model assertion")
 def test_model_is_sonnet():
     assert "sonnet" in MODEL.lower()
 

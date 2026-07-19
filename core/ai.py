@@ -5,19 +5,47 @@ import re
 from pathlib import Path
 
 import anthropic
+import openai
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-3-5-sonnet-20241022"
 MAX_TOKENS = 1024
 
-_client: anthropic.Anthropic | None = None
+# ponytail: single `if` on env, no Provider base class. Add abstractions when a 3rd provider lands.
+_PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+
+def _anthropic_default_model() -> str:
+    return os.environ.get("LLM_MODEL", "claude-3-5-sonnet-20241022")
+
+def _nvidia_default_model() -> str:
+    return os.environ.get("LLM_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
+
+def _model() -> str:
+    return _anthropic_default_model() if _PROVIDER == "anthropic" else _nvidia_default_model()
+
+# Backward-compat: external code/tests imported `MODEL`. Reflects the active provider's model.
+MODEL = _model()
+
+_client: anthropic.Anthropic | openai.OpenAI | None = None
 
 
-def get_client() -> anthropic.Anthropic:
+def _require_env(name: str) -> str:
+    try:
+        return os.environ[name]
+    except KeyError:
+        raise RuntimeError(f"Missing required env var '{name}' for LLM_PROVIDER='{_PROVIDER}'.")
+
+
+def get_client() -> anthropic.Anthropic | openai.OpenAI:
     global _client
     if _client is None:
-        _client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        if _PROVIDER == "anthropic":
+            _client = anthropic.Anthropic(api_key=_require_env("ANTHROPIC_API_KEY"))
+        else:
+            _client = openai.OpenAI(
+                base_url=os.environ.get("LLM_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+                api_key=_require_env("NVIDIA_API_KEY"),
+            )
     return _client
 
 
@@ -110,18 +138,19 @@ def extract_intent(response: str) -> tuple[dict | None, str]:
     Look for any intent JSON block in Claude's response.
     Returns (intent_dict, visible_text) — strips the JSON from user-visible text.
     """
+    # NVIDIA-compatible models wrap intent JSON in ```json fences more often than Claude.
+    search_target = re.sub(r'```(?:json)?\s*', '', response)
     pattern = re.compile(r'\{[^{}]*"intent"\s*:\s*"[^"]*"[^{}]*\}', re.DOTALL)
-    match = pattern.search(response)
+    match = pattern.search(search_target)
     if not match:
         return None, response
     try:
         intent = json.loads(match.group())
     except json.JSONDecodeError:
         return None, response
-    visible = response[:match.start()].strip()
-    # Remove any trailing markdown code fences that Claude might add
-    visible = re.sub(r'```\s*json\s*$', '', visible, flags=re.MULTILINE).strip()
-    visible = re.sub(r'```\s*$', '', visible, flags=re.MULTILINE).strip()
+    # Strip the matched region (and any surrounding fence space) from the visible text.
+    visible = response[:response.find(match.group())].strip()
+    visible = re.sub(r'```\s*(json)?\s*$', '', visible, flags=re.MULTILINE).strip()
     return intent, visible
 
 
@@ -139,10 +168,22 @@ def get_ai_response(
 ) -> str:
     system_prompt = build_system_prompt(config, knowledge, free_ranges, detected_lang)
     messages = history + [{"role": "user", "content": user_message}]
-    resp = get_client().messages.create(
-        model=MODEL,
+    client = get_client()
+    model = _model()
+    if _PROVIDER == "anthropic":
+        resp = client.messages.create(
+            model=model,
+            max_tokens=MAX_TOKENS,
+            system=system_prompt,
+            messages=messages,
+        )
+        return resp.content[0].text
+    # OpenAI-compatible path (NVIDIA NIM and others via LLM_BASE_URL)
+    openai_messages = [{"role": "system", "content": system_prompt}] + messages
+    resp = client.chat.completions.create(
+        model=model,
         max_tokens=MAX_TOKENS,
-        system=system_prompt,
-        messages=messages,
+        temperature=1,
+        messages=openai_messages,
     )
-    return resp.content[0].text
+    return resp.choices[0].message.content or ""
