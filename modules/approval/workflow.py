@@ -36,7 +36,8 @@ async def create_request(redis_client: redis.Redis, config: dict, whatsapp_clien
     text = (
         f"Nuova richiesta {req_id}:\n"
         f"Da: {data.get('guest_name')} ({data.get('guest_phone')})\n"
-        f"Date: {data.get('dates')}\n"
+        f"Dal: {data.get('checkin')} al {data.get('checkout')}\n"
+        f"Ospiti: {data.get('guests', 1)}\n"
         f"Totale: {data.get('total')}\n\n"
         f"Rispondi con OK {req_id} o NO {req_id}"
     )

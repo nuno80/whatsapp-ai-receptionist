@@ -93,8 +93,12 @@ def test_booking_intent_creates_approval_request(mocker, bypass_webhook_verifica
             "calendar_id": "test",
             "calendar_owner_email": "test@test.com",
             "max_guests": 2,
-            "min_stay_nights": 2,
-            "prices": {"default": 100}
+            "minimum_stay_periods": [
+                {"start_date": "2027-01-01", "end_date": "2027-12-31", "min_nights": 2}
+            ],
+            "pricing_periods": [
+                {"start_date": "2027-01-01", "end_date": "2027-12-31", "price_per_night": 100}
+            ]
         },
         "authorized_approvers": [{"phone": "+393000000001", "name": "Anna"}]
     })

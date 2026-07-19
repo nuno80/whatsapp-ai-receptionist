@@ -195,8 +195,7 @@ def _get_calendar_client() -> CalendarClient | None:
         _calendar_client = CalendarClient(
             calendar_id=booking_cfg["calendar_id"],
             calendar_owner_email=booking_cfg["calendar_owner_email"],
-            business_hours=booking_cfg["business_hours"],
-            timezone=CONFIG["client"].get("timezone", "America/Argentina/Buenos_Aires"),
+            timezone=CONFIG["client"].get("timezone", "UTC"),
         )
     return _calendar_client
 
@@ -443,9 +442,11 @@ async def _handle_booking_requested(phone: str, intent: dict, visible_response: 
         return
         
     nights = (checkout_date - checkin_date).days
-    min_stay = CONFIG["booking"].get("min_stay_nights", 1)
+    min_stay_periods = CONFIG["booking"].get("minimum_stay_periods", [])
+    from modules.booking.pricing import min_nights_required
+    min_stay = min_nights_required(checkin_date, checkout_date, min_stay_periods)
     if nights < min_stay:
-        error_msg = f"Il soggiorno minimo è di {min_stay} notti."
+        error_msg = f"Il soggiorno minimo in questo periodo è di {min_stay} notti."
         HISTORY.add(phone, "assistant", error_msg)
         await WA.send_text(phone, error_msg)
         return
@@ -465,17 +466,28 @@ async def _handle_booking_requested(phone: str, intent: dict, visible_response: 
         return
         
     # Calculate price
-    base_price = CONFIG["booking"].get("prices", {}).get("default", 0)
-    total_price = base_price * nights
+    from modules.booking.pricing import price_for_stay
+    pricing_periods = CONFIG["booking"].get("pricing_periods", [])
+    try:
+        total_price = price_for_stay(checkin_date, checkout_date, pricing_periods)
+    except Exception as e:
+        logger.error("Pricing error: %s", e)
+        error_msg = "Non sono riuscito a calcolare il prezzo per queste date. Per favore riprova o contattaci."
+        HISTORY.add(phone, "assistant", error_msg)
+        await WA.send_text(phone, error_msg)
+        return
         
     cal.lock_range(checkin_date, checkout_date)
     
     from modules.approval.workflow import create_request
     redis_client = _get_pending_payment_redis()
     
+    from core.phone import normalize_phone
+    guest_phone = normalize_phone(phone)
+
     request_data = {
         "type": "create",
-        "guest_phone": phone,
+        "guest_phone": guest_phone,
         "guest_name": intent.get("user_name", "Ospite"),
         "checkin": checkin_date.isoformat(),
         "checkout": checkout_date.isoformat(),
