@@ -14,6 +14,7 @@ from core.transcribe import transcribe_audio
 from core.whatsapp import WhatsAppClient, validate_webhook_signature
 from modules.booking.calendar import CalendarClient
 from modules.payments.mercadopago import MPClient, validate_mp_signature
+from modules.approval.workflow import is_approver, handle_approval_message
 from reminders.scheduler import send_reminders
 
 logger = logging.getLogger(__name__)
@@ -281,6 +282,14 @@ async def receive_message(request: Request):
 
     except (KeyError, IndexError):
         return Response(status_code=200)
+
+    # Intercept approver messages BEFORE the normal flow
+    if is_approver(phone, CONFIG):
+        r = _get_pending_payment_redis()
+        if r:
+            result = await handle_approval_message(r, CONFIG, WA, phone, user_text)
+            if result != "ignored":
+                return Response(status_code=200)
 
     # Prevent concurrent processing for the same phone number
     if not _acquire_message_lock(phone):
