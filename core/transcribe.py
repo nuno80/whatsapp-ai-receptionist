@@ -16,7 +16,7 @@ def _get_client() -> openai.OpenAI:
     return _client
 
 
-def transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
+def transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg", lang: str = "it") -> str:
     """Transcribe audio bytes using OpenAI Whisper."""
     ext_map = {
         "audio/ogg": "ogg",
@@ -30,9 +30,13 @@ def transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
     file.name = f"audio.{ext}"
 
     client = _get_client()
+    
+    # We pass the guest's language explicitly to guide Whisper
+    # If the guest switches language, Whisper can still auto-detect if the audio is obviously different,
+    # but providing the hint is usually better, with fallback to "it"
     transcript = client.audio.transcriptions.create(
         model="whisper-1",
         file=file,
-        language="es",
+        language=lang,
     )
     return transcript.text

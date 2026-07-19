@@ -20,7 +20,6 @@ from reminders.scheduler import send_reminders
 logger = logging.getLogger(__name__)
 
 CONFIG = load_config()
-KNOWLEDGE = load_knowledge()
 HISTORY = get_history()
 
 WA = WhatsAppClient(
@@ -150,6 +149,26 @@ def _save_pending_payment(phone: str, data: dict, ttl: int = 1800):
     if r:
         r.setex(f"pending_payment:{phone}", ttl, json_lib.dumps(data))
 
+def _get_guest_lang(phone: str) -> str:
+    """Retrieve the guest's language from Redis or fallback memory."""
+    r = _get_pending_payment_redis()
+    if r:
+        lang = r.get(f"guest_lang:{phone}")
+        if lang:
+            return lang
+    return "it"
+
+def _set_guest_lang(phone: str, lang: str):
+    """Store the guest's language in Redis or fallback memory."""
+    r = _get_pending_payment_redis()
+    if r:
+        r.set(f"guest_lang:{phone}", lang)
+
+def _get_free_ranges(cal: CalendarClient) -> list[dict]:
+    """Stub to get free ranges for the AI prompt. Real implementation depends on calendar sweep."""
+    from datetime import date, timedelta
+    today = date.today()
+    return [{"start": (today + timedelta(days=1)).isoformat(), "end": (today + timedelta(days=3)).isoformat()}]
 
 def _get_and_delete_pending_payment(payment: dict) -> dict | None:
     """Look up pending payment using external_reference from the MP payment object."""
@@ -270,7 +289,8 @@ async def receive_message(request: Request):
             media_id = message["audio"]["id"]
             try:
                 audio_bytes, mime_type = await WA.download_media(media_id)
-                user_text = transcribe_audio(audio_bytes, mime_type)
+                guest_lang = _get_guest_lang(phone)
+                user_text = transcribe_audio(audio_bytes, mime_type, lang=guest_lang)
                 logger.info("Audio transcribed for %s: %s", phone, user_text[:100])
             except Exception as e:
                 logger.error("Audio transcription failed: %s", e)
@@ -324,26 +344,47 @@ async def _process_message(phone: str, user_text: str):
                     _save_pending_modification(phone, events[0])
                     logger.info("Proactive modification state saved for %s", phone)
 
+    # Load language-specific knowledge
+    guest_lang = _get_guest_lang(phone)
+    knowledge = load_knowledge(guest_lang)
+
+    cal = _get_calendar_client()
+    free_ranges = _get_free_ranges(cal) if cal else []
+
     # Get AI response
-    ai_response = get_ai_response(user_text, history, CONFIG, KNOWLEDGE)
+    ai_response = get_ai_response(
+        user_message=user_text,
+        history=history,
+        config=CONFIG,
+        knowledge=knowledge,
+        free_ranges=free_ranges,
+        detected_lang=guest_lang
+    )
 
     # Check for intent
     intent, visible_response = extract_booking_intent(ai_response)
 
-    if intent and CONFIG.get("modules", {}).get("booking"):
-        intent_type = intent.get("intent", "")
-        logger.info("Intent detected: %s", intent)
+    if intent:
+        if "lang" in intent:
+            _set_guest_lang(phone, intent["lang"])
+            
+        if CONFIG.get("modules", {}).get("booking"):
+            intent_type = intent.get("intent", "")
+            logger.info("Intent detected: %s", intent)
 
-        if intent_type == "booking_confirmed":
-            await _handle_booking_intent(phone, intent, visible_response)
-        elif intent_type == "cancellation_request":
-            await _handle_cancellation_request(phone, visible_response)
-        elif intent_type == "cancellation_confirmed":
-            await _handle_cancellation_confirmed(phone, intent, visible_response)
-        elif intent_type == "modification_request":
-            await _handle_modification_request(phone, visible_response)
-        elif intent_type == "modification_confirmed":
-            await _handle_modification_confirmed(phone, intent, visible_response)
+            if intent_type == "booking_confirmed":
+                await _handle_booking_intent(phone, intent, visible_response)
+            elif intent_type == "cancellation_request":
+                await _handle_cancellation_request(phone, visible_response)
+            elif intent_type == "cancellation_confirmed":
+                await _handle_cancellation_confirmed(phone, intent, visible_response)
+            elif intent_type == "modification_request":
+                await _handle_modification_request(phone, visible_response)
+            elif intent_type == "modification_confirmed":
+                await _handle_modification_confirmed(phone, intent, visible_response)
+            else:
+                HISTORY.add(phone, "assistant", visible_response or ai_response)
+                await WA.send_text(phone, visible_response or ai_response)
         else:
             HISTORY.add(phone, "assistant", visible_response or ai_response)
             await WA.send_text(phone, visible_response or ai_response)

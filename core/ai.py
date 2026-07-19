@@ -8,7 +8,7 @@ import anthropic
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-haiku-4-5-20251001"
+MODEL = "claude-3-5-sonnet-20240620"
 MAX_TOKENS = 1024
 
 _client: anthropic.Anthropic | None = None
@@ -21,26 +21,39 @@ def get_client() -> anthropic.Anthropic:
     return _client
 
 
-def load_knowledge(path: str = "knowledge/client.txt") -> str:
+def load_knowledge(lang: str = "it") -> str:
+    path = f"knowledge/{lang}.txt"
     try:
         return Path(path).read_text(encoding="utf-8")
     except FileNotFoundError:
+        if lang != "it":
+            logger.warning("Knowledge file not found for %s, falling back to 'it'.", lang)
+            return load_knowledge("it")
         logger.warning("Knowledge file not found: %s", path)
         return ""
 
 
-def build_system_prompt(config: dict, knowledge: str) -> str:
+def build_system_prompt(config: dict, knowledge: str, free_ranges: list[dict] = None, detected_lang: str = "it") -> str:
     client_name = config["client"]["name"]
     modules = config.get("modules", {})
+    persona = config.get("bot_persona", {})
+    name = persona.get("name", "Giulia")
+    tone = persona.get("tone", "cordiale-professionale")
+    is_ai = persona.get("declares_as_ai", True)
 
     lines = [
-        f"You are the virtual assistant for {client_name}.",
-        "Speak in the third person about the professional (do not impersonate them).",
-        "Answer using the information from the knowledge base.",
-        "Respond in the user's language.",
-        "Be concise (maximum 3-4 paragraphs). Do not use emojis.",
-        "FORMAT: Use WhatsApp formatting, NOT markdown. Bold with *single asterisks* (not **double**). Italics with _underscores_. Do not use # or other markdown formatting.",
-        "Do not make up information that is not in the knowledge base.",
+        f"You are {name}, the virtual assistant for {client_name}.",
+        f"Tone: {tone}.",
+        "Speak in the first person as the assistant, never impersonate a human host.",
+        "FORMAT: Use WhatsApp formatting only. Bold with *single asterisks* (not **double**). Italics with _underscores_. No markdown headings, no #, no ``` or backticks.",
+        f"Respond in this language code: {detected_lang}.",
+        "Be concise (maximum 3-4 paragraphs). Do not use emojis unless appropriate for the tone.",
+    ]
+
+    if is_ai:
+        lines.append("Explicitly state you are a virtual assistant (not a human host) early in the conversation and if asked.")
+
+    lines += [
         "",
         "KNOWLEDGE BASE:",
         knowledge,
@@ -48,88 +61,45 @@ def build_system_prompt(config: dict, knowledge: str) -> str:
 
     if modules.get("booking"):
         booking = config.get("booking", {})
-        services_text = "\n".join(
-            f"- {s['name']}: ${s['price']:,} ({s['duration_minutes']} min)"
-            for s in booking.get("services", [])
-        )
-        locations_text = "\n".join(
-            f"- {loc['name']}: {loc['address']} ({', '.join(loc['days'])})"
-            for loc in booking.get("locations", [])
-        )
-        hours = booking.get("business_hours", {})
-        from datetime import date as date_cls, timedelta
-        today = date_cls.today()
-        day_names_en = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday",
-                        4: "Friday", 5: "Saturday", 6: "Sunday"}
-        today_str = f"{day_names_en[today.weekday()]} {today.isoformat()}"
+        from datetime import date as date_cls
+        today_str = f"Today is {date_cls.today().isoformat()}."
 
-        # Calculate next available dates based on booking days
-        day_name_to_num = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
-                           "friday": 4, "saturday": 5, "sunday": 6}
-        booking_days = set()
-        for loc in booking.get("locations", []):
-            for d in loc.get("days", []):
-                booking_days.add(day_name_to_num.get(d.lower(), -1))
-        next_dates = []
-        check = today + timedelta(days=1)
-        while len(next_dates) < 5:
-            if check.weekday() in booking_days:
-                next_dates.append(f"{day_names_en[check.weekday()]} {check.day}/{check.month} ({check.isoformat()})")
-            check += timedelta(days=1)
-        next_dates_str = ", ".join(next_dates)
+        ranges_text = "None"
+        if free_ranges:
+            ranges_text = "\n".join([f"- From {r['start']} to {r['end']}" for r in free_ranges])
 
         lines += [
             "",
-            "BOOKINGS:",
-            f"Today is {today_str}.",
-            f"Next available dates for appointments: {next_dates_str}.",
-            "Use ONLY these dates when proposing appointments. Do not make up other dates.",
-            "When the user wants to book an appointment, you need:",
-            "1. Type of service (from the services list)",
-            "2. Date and time",
-            "3. Full name",
+            "BOOKINGS (STAYS):",
+            today_str,
+            f"Pre-calculated free dates for stays:\n{ranges_text}",
+            "IMPORTANT: ONLY offer dates that fall within the pre-calculated free dates above. The server validation always wins.",
+            "",
+            "To book a stay, you need:",
+            "1. Check-in date",
+            "2. Check-out date",
+            "3. Number of guests",
+            "4. Full name",
             "",
             "IMPORTANT about the booking experience:",
-            "- 'Tomorrow' means the day after today. 'Day after tomorrow' is two days later. ALWAYS resolve these expressions to the actual date.",
-            "- If the user says something vague like 'tomorrow', 'Wednesday' or 'next week', YOU resolve the actual date and propose a time.",
-            "  Example: if today is Tuesday 03/31, 'tomorrow' = Wednesday 04/01. Reply: 'Tomorrow Wednesday 04/01 at 10:00. Does that work for you?'",
-            "- NEVER ask for multiple pieces of information at once. Ask ONE thing per message. If you already have the date, ask for the service. If you already have the service, ask for the name. Never numbered lists with multiple questions.",
-            "- Try to complete the booking in as few messages as possible.",
-            f"Available hours: {hours.get('start', '09:00')} to {hours.get('end', '18:00')}",
-            f"Available services:\n{services_text}",
-            f"Locations:\n{locations_text}",
-            f"Cancellation policy: {booking.get('cancellation_policy', '')}",
-            "",
-            "Once you have all the data confirmed by the user, respond with a confirmation message",
-            "AND at the end include this JSON on a single line (NO markdown, NO ```json, NO backticks):",
-            '{"intent": "booking_confirmed", "service": "<EXACT service name from the list>", '
-            '"date": "<YYYY-MM-DD>", "time": "<HH:MM>", "location": "<location name>", '
-            '"user_name": "<full name>"}',
-            "IMPORTANT: The 'service' field in the JSON MUST be the exact name from the services list. "
-            "For example, if the user asks for the bundle, use 'Cleaning + Checkup (bundle)', NOT 'Dental Cleaning'.",
-            "IMPORTANT: Do not mention payment, the system handles it automatically.",
-            "IMPORTANT: The JSON goes in plain text at the end of the message, never inside code blocks.",
+            "- Try to complete the booking in as few messages as possible, but ask one thing per message.",
+            "- Once you have all data confirmed, respond with a confirmation message",
+            "AND at the end include this JSON on a single line:",
+            '{"intent": "booking_requested", "checkin": "<YYYY-MM-DD>", "checkout": "<YYYY-MM-DD>", '
+            '"guests": <number>, "user_name": "<full name>", "lang": "<language code>"}',
+            "IMPORTANT: Use 'booking_requested' (never claim the booking is confirmed, it requires human approval).",
+            "IMPORTANT: The JSON goes in plain text at the end, never inside code blocks.",
             "",
             "CANCELLATIONS:",
-            "When the user wants to cancel an appointment, respond politely and at the end include:",
+            "When the user wants to cancel their stay, respond politely and at the end include:",
             '{"intent": "cancellation_request"}',
-            "Do not ask for name or other details. The system searches for appointments automatically by phone number.",
-            "If the system shows the appointments and the user confirms which one to cancel, respond with:",
-            '{"intent": "cancellation_confirmed", "event_index": <appointment number>}',
-            "If the user says 'yes' and there is only one appointment, use event_index: 1.",
+            "If the system shows their bookings and the user confirms which one to cancel, respond with:",
+            '{"intent": "cancellation_confirmed", "event_index": <number>}',
             "",
             "MODIFICATIONS:",
-            "When the user wants to change, modify, move or reschedule an appointment, ALWAYS respond with:",
+            "When the user wants to change dates, ALWAYS respond with:",
             '{"intent": "modification_request"}',
-            "IMPORTANT: ALWAYS emit modification_request first, even if the user already provides the new date in the same message. "
-            "The system needs to look up the current appointment before proceeding. Do not try to handle the modification conversationally.",
-            "Do not ask for name or extra details. The system searches by phone and shows the appointments.",
-            "After the system shows the appointment, the user will tell you the new date/time.",
-            "IMPORTANT: When the user confirms the new date/time for their modified appointment, emit a booking_confirmed JSON (NOT modification_confirmed). "
-            "Use the same service as the original appointment. Example:",
-            '{"intent": "booking_confirmed", "service": "Dental Cleaning", "date": "2026-04-03", "time": "15:00", "location": "Downtown Office", "user_name": "John Smith"}',
-            "modification_confirmed is ONLY used when there are MULTIPLE appointments and the user chooses which one to modify:",
-            '{"intent": "modification_confirmed", "event_index": <appointment number>}',
+            "When the user confirms the new dates for a modified stay, emit a booking_requested JSON with the new checkin/checkout."
         ]
 
     return "\n".join(lines)
@@ -164,8 +134,10 @@ def get_ai_response(
     history: list[dict],
     config: dict,
     knowledge: str,
+    free_ranges: list[dict] = None,
+    detected_lang: str = "it"
 ) -> str:
-    system_prompt = build_system_prompt(config, knowledge)
+    system_prompt = build_system_prompt(config, knowledge, free_ranges, detected_lang)
     messages = history + [{"role": "user", "content": user_message}]
     resp = get_client().messages.create(
         model=MODEL,
