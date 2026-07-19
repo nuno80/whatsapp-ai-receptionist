@@ -2,7 +2,7 @@
 
 ## Contesto del progetto
 
-Partiamo dal repository open source [martin-minghetti/whatsapp-ai-receptionist](https://github.com/martin-minghetti/whatsapp-ai-receptionist) come starter kit. È un bot WhatsApp in Python/FastAPI che usa l'API Anthropic (Claude) per gestire conversazioni, estrae l'intento del cliente e lo traduce in eventi su Google Calendar, con Redis per lo stato e promemoria automatici.
+Partiamo dal repository open source [nuno80/whatsapp-ai-receptionist](https://github.com/nuno80/whatsapp-ai-receptionist) come starter kit. È un bot WhatsApp in Python/FastAPI che usa l'API Anthropic (Claude) per gestire conversazioni, estrae l'intento del cliente e lo traduce in eventi su Google Calendar, con Redis per lo stato e promemoria automatici.
 
 Il progetto originale è pensato per attività con **appuntamenti orari** (dentisti, saloni). Va adattato per **soggiorni multi-notte** in un B&B con **una sola camera doppia**.
 
