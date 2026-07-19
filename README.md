@@ -1,10 +1,10 @@
-<h1 align="center">WhatsApp AI Receptionist</h1>
+<h1 align="center">WhatsApp AI Receptionist for B&B</h1>
 
-**Your clients are messaging you on WhatsApp anyway. This bot answers them.**
+**Your guests are messaging you on WhatsApp anyway. This bot answers them.**
 
-Service businesses -- dentists, nutritionists, physiotherapists, salons -- lose bookings because nobody picks up the phone at 11pm. Clients message on WhatsApp, get no reply, and book elsewhere. The AI receptionist handles the conversation, checks real-time availability, and books directly into Google Calendar. No app to install, no portal to learn. Just WhatsApp.
+A specialized WhatsApp AI receptionist for Bed & Breakfasts and short-term rentals. It handles conversational booking inquiries, checks real-time availability in Google Calendar, creates pending approval requests for the owners, and manages the full lifecycle (create, modify, cancel) with policy enforcement and multi-language support (IT/EN/ES/FR/DE).
 
-![Python](https://img.shields.io/badge/Python-3.12+-blue)
+![Python](https://img.shields.io/badge/Python-3.11+-blue)
 ![Tests](https://github.com/nuno80/whatsapp-ai-receptionist/actions/workflows/tests.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -14,36 +14,22 @@ Service businesses -- dentists, nutritionists, physiotherapists, salons -- lose 
 
 | Capability | How |
 |---|---|
-| **Conversational booking** | Natural language via WhatsApp, powered by Claude |
-| **Real-time availability** | Google Calendar integration with slot locking |
-| **Full lifecycle** | Create, cancel, and modify appointments |
+| **Conversational booking** | Natural language via WhatsApp, powered by Claude 3.5 Sonnet |
+| **Real-time availability** | Google Calendar freebusy integration for consecutive night stays |
+| **Atomic Approvals** | All requests are routed to human owners for approval via WhatsApp before confirming |
+| **Full lifecycle** | Create, cancel, and modify stays |
 | **Voice messages** | Audio transcribed via OpenAI Whisper |
-| **Smart dates** | "tomorrow", "next Wednesday", "next week" resolved to real dates |
-| **Reminders** | Automated WhatsApp messages 24h before appointments |
-| **Payments** | Optional Mercado Pago integration with checkout links |
+| **Multi-Language** | Detects user language (IT, EN, ES, FR, DE) and switches knowledge base and replies dynamically |
+| **Pricing Rules** | Built-in rules engine for nightly pricing, date periods, and minimum stays |
 | **Multi-client ready** | YAML config + knowledge base per business, no code changes |
 | **Resilient state** | Redis in production, in-memory fallback for development |
 
 ---
 
-## Screenshots
-
-### Booking flow
-A client books a dental cleaning in natural language. The bot checks real-time availability, presents open slots, and confirms the appointment in Google Calendar.
-
-![Booking flow](public/screenshots/booking-flow.png)
-
-### Cancellation flow
-The bot finds the existing appointment, checks the cancellation policy (24h rule), and cancels with no fee.
-
-![Cancellation flow](public/screenshots/cancel-flow.png)
-
----
-
 ## How it works
 
-```
-Client sends WhatsApp message
+```text
+Guest sends WhatsApp message
         │
         ▼
 ┌─────────────────┐
@@ -51,12 +37,23 @@ Client sends WhatsApp message
 └────────┬────────┘
          │
          ▼
-┌─────────────────┐     ┌──────────────┐
-│   Claude AI     │ ◄───│  Knowledge   │
-│  (conversation) │     │  base + config│
-└────────┬────────┘     └──────────────┘
+┌─────────────────┐     ┌───────────────────────┐
+│   Claude AI     │ ◄───│  Knowledge base       │
+│  (conversation) │     │  config.yaml + IT/EN/..│
+└────────┬────────┘     └───────────────────────┘
          │
-         │ extracts structured intent
+         │ extracts structured stay intent
+         ▼
+┌─────────────────┐
+│ Google Calendar  │ ◄── real-time freebusy check
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Approval System  │ ◄── Fans out to 4 owner phones
+└────────┬────────┘
+         │
+         │ First owner replies "OK <id>"
          ▼
    ┌─────┴──────┐
    │            │
@@ -67,11 +64,6 @@ Client sends WhatsApp message
 └──┬───┘  └────┬─────┘
    │           │
    ▼           ▼
-┌─────────────────┐
-│ Google Calendar  │ ◄── real-time availability check
-└────────┬────────┘
-         │
-         ▼
    Confirmation via WhatsApp
 ```
 
@@ -79,10 +71,10 @@ Client sends WhatsApp message
 
 ## Design principles
 
-- **No frameworks for the sake of frameworks.** Plain FastAPI with direct Anthropic SDK calls. No LangChain, no LangGraph. The problem is solved by ~50 lines of direct API calls.
-- **Config-driven, not code-driven.** New clients are onboarded by editing `config.yaml` and `knowledge/client.txt`. No code changes, no admin panel.
+- **Human-in-the-loop.** All booking creation, modification, and cancellation requests require explicit approval from the host(s).
+- **No frameworks for the sake of frameworks.** Plain FastAPI with direct Anthropic SDK calls. No LangChain, no LangGraph. The problem is solved by direct API calls.
+- **Config-driven, not code-driven.** New clients are onboarded by editing `config.yaml` and `knowledge/{lang}.txt`. No code changes, no admin panel.
 - **Works offline from Redis.** Every stateful component has a Redis backend and an in-memory fallback. Run locally with zero infrastructure.
-- **Dates are pre-calculated.** LLMs are bad at date math. The system prompt injects the next 5 available booking dates on every request. Zero date hallucination.
 
 See [DECISIONS.md](DECISIONS.md) for the full rationale behind each technical choice.
 
@@ -95,8 +87,8 @@ See [DECISIONS.md](DECISIONS.md) for the full rationale behind each technical ch
 ```bash
 git clone https://github.com/nuno80/whatsapp-ai-receptionist.git
 cd whatsapp-ai-receptionist
-python -m venv venv
-source venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -111,12 +103,18 @@ Required:
 - `ANTHROPIC_API_KEY` -- [Get one here](https://console.anthropic.com/)
 - `WHATSAPP_ACCESS_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID` + `WHATSAPP_APP_SECRET` -- [Meta Developer Portal](https://developers.facebook.com/)
 - `WHATSAPP_VERIFY_TOKEN` -- any string you choose (must match webhook config)
+- `REDIS_URL` -- required for atomic approval locks
 
-For booking (optional):
+For booking (required):
 - `GOOGLE_SERVICE_ACCOUNT_JSON` -- base64-encoded Google service account credentials
 - `GOOGLE_CALENDAR_ID` + `GOOGLE_CALENDAR_OWNER_EMAIL`
 
-Edit `config.yaml` with your business details and `knowledge/client.txt` with your knowledge base.
+Edit `config.yaml` with your business details:
+- **`authorized_approvers`**: list of phone numbers (e.g. `+393331234567`) that receive approval requests.
+- **`bot_persona`**: controls tone and whether it declares itself as AI.
+- **`booking`**: max guests, cancellation policies, pricing periods, and minimum stay periods.
+
+Populate the knowledge base by editing `knowledge/it.txt`, `knowledge/en.txt`, etc.
 
 ### 3. Run
 
@@ -144,34 +142,47 @@ Set the webhook URL in [Meta Developer Portal](https://developers.facebook.com/)
 
 ```yaml
 client:
-  name: "Dr. Smith - Dentist"
-  timezone: "America/New_York"
+  name: "B&B Roma Centrale"
+  timezone: "Europe/Rome"
 
 modules:
-  booking: true      # Enable appointment scheduling
-  payments: false    # Enable Mercado Pago payments
-  reminders: true    # Enable 24h reminders
+  booking: true
+  payments: false
+  reminders: false
+  ota_sync: false
+
+bot_persona:
+  name: "Giulia"
+  tone: "cordiale-professionale"
+  declares_as_ai: true
+
+authorized_approvers:
+  - phone: "+393331234567"
+    name: "Marco"
+  - phone: "+393337654321"
+    name: "Anna"
 
 booking:
-  business_hours:
-    start: "09:00"
-    end: "18:00"
-  services:
-    - name: "Cleaning"
-      duration_minutes: 30
-      price: 15000
-    - name: "Consultation"
-      duration_minutes: 45
-      price: 20000
-  locations:
-    - name: "Main Office"
-      address: "123 Main St"
-      days: ["monday", "tuesday", "wednesday", "thursday", "friday"]
+  calendar_id: "${GOOGLE_CALENDAR_ID}"
+  calendar_owner_email: "${GOOGLE_CALENDAR_OWNER_EMAIL}"
+  max_guests: 2
+  checkin_time: "15:00"
+  checkout_time: "10:00"
+  cancellation_policy:
+    free_cancellation_days_before: 7
+  pricing_periods:
+    - start_date: "2026-01-01"
+      end_date: "2026-12-31"
+      price_per_night: 120
+  minimum_stay_periods:
+    - start_date: "2026-01-01"
+      end_date: "2026-12-31"
+      min_nights: 2
 ```
 
-### knowledge/client.txt
+### knowledge/
 
-Free-text knowledge base about the business. The AI uses this to answer questions. Write it like you'd explain the business to a new receptionist.
+Free-text knowledge base about the business divided by language (`it.txt`, `en.txt`, etc). The AI uses this to answer questions. Write it like you'd explain the business to a new receptionist.
 
 ---
 
@@ -181,39 +192,13 @@ Free-text knowledge base about the business. The AI uses this to answer question
 pytest tests/ -v
 ```
 
-42 tests covering all modules -- webhook handling, AI intent extraction, calendar operations, payment flows, reminders, and configuration.
-
----
-
-## Deploy
-
-### Railway (recommended)
-
-The repo includes `railway.toml` ready to go:
-
-```bash
-railway up
-```
-
-Set environment variables in Railway dashboard. Add a cron job for reminders:
-```
-curl -X POST https://your-app.railway.app/internal/send-reminders \
-  -H "X-Internal-Secret: $INTERNAL_SECRET"
-```
-
-### Other platforms
-
-Any platform that runs Python + FastAPI works. The app starts with:
-
-```bash
-uvicorn core.main:app --host 0.0.0.0 --port $PORT
-```
+Tests cover all modules -- webhook handling, AI intent extraction, pricing rules, approval flow, calendar operations, payment flows, and configuration.
 
 ---
 
 ## Architecture
 
-```
+```text
 whatsapp-ai-receptionist/
 ├── core/
 │   ├── main.py          # FastAPI app, webhook handlers, intent routing
@@ -221,20 +206,23 @@ whatsapp-ai-receptionist/
 │   ├── whatsapp.py      # WhatsApp Cloud API client
 │   ├── transcribe.py    # Whisper audio transcription
 │   ├── history.py       # Conversation history (Redis / in-memory)
-│   └── phone.py         # Phone number normalization
+│   └── phone.py         # Phone number normalization for Italy/International
 ├── config/
 │   └── loader.py        # YAML config with ${ENV_VAR} substitution
 ├── modules/
+│   ├── approval/        # First-claim-wins atomic approver routing
+│   │   └── workflow.py
 │   ├── booking/
-│   │   └── calendar.py  # Google Calendar with slot locking
+│   │   ├── calendar.py  # Google Calendar range locks and sync
+│   │   └── pricing.py   # Date-based rules engine for pricing/min-stay
 │   └── payments/
-│       └── mercadopago.py  # Mercado Pago checkout + webhook
+│       └── mercadopago.py
 ├── reminders/
 │   └── scheduler.py     # 24h reminder sender
 ├── knowledge/
-│   └── client.txt       # Business knowledge base
+│   └── it.txt, en.txt...# Multi-language business knowledge
 ├── config.yaml          # Per-client configuration
-└── tests/               # 42 tests, full coverage
+└── tests/               # Unit and integration tests
 ```
 
 ---
