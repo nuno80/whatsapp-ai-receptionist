@@ -12,7 +12,7 @@ from core.ai import extract_booking_intent, get_ai_response, load_knowledge
 from core.history import get_history
 from core.transcribe import transcribe_audio
 from core.whatsapp import WhatsAppClient, validate_webhook_signature
-from modules.booking.calendar import CalendarClient, Slot
+from modules.booking.calendar import CalendarClient
 from modules.payments.mercadopago import MPClient, validate_mp_signature
 from reminders.scheduler import send_reminders
 
@@ -392,6 +392,14 @@ async def _handle_booking_intent(phone: str, intent: dict, visible_response: str
         await WA.send_text(phone, error_msg)
         return
 
+    # TODO: Range refactor - slot removed
+    from dataclasses import dataclass
+    @dataclass
+    class Slot:
+        date: date
+        start_time: dt_time
+        location: str
+
     slot = Slot(date=booking_date, start_time=booking_time, location=location["name"])
 
     if not cal.is_slot_available(booking_date, booking_time, service["duration_minutes"]):
@@ -458,7 +466,7 @@ async def _handle_payment_flow(phone, intent, visible_response, service, locatio
         return
 
     # Lock the slot for 30 minutes
-    cal.lock_slot(slot.date, slot.start_time, ttl_seconds=1800)
+    cal.lock_range(booking_date, booking_date + timedelta(days=1))
 
     try:
         pref = mp.create_preference(
@@ -468,7 +476,7 @@ async def _handle_payment_flow(phone, intent, visible_response, service, locatio
         )
     except Exception as e:
         logger.error("MP preference creation failed: %s", e)
-        cal.release_slot(slot.date, slot.start_time)
+        cal.release_range(booking_date, booking_date + timedelta(days=1))
         await WA.send_text(phone, "There was an error generating the payment link. Please try again.")
         return
 
@@ -531,6 +539,13 @@ async def payment_webhook(request: Request):
         if cal:
             booking_date = date.fromisoformat(pending["date"])
             booking_time = dt_time.fromisoformat(pending["time"])
+            # TODO: Range refactor - slot removed
+            from dataclasses import dataclass
+            @dataclass
+            class Slot:
+                date: date
+                start_time: dt_time
+                location: str
             slot = Slot(date=booking_date, start_time=booking_time, location=pending["location"])
             cal.create_event(
                 service_name=pending["service"],

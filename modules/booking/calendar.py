@@ -15,13 +15,6 @@ logger = logging.getLogger(__name__)
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 
-@dataclass
-class Slot:
-    date: date
-    start_time: time
-    location: str
-
-
 def _get_credentials() -> Credentials:
     raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
     service_account_info = json.loads(base64.b64decode(raw))
@@ -40,28 +33,39 @@ def _get_redis():
     except Exception:
         return None
 
-
 class CalendarClient:
     def __init__(self, calendar_id: str, calendar_owner_email: str,
-                 business_hours: dict, timezone: str = "America/Argentina/Buenos_Aires"):
+                 timezone: str = "Europe/Rome"):
         self._calendar_id = calendar_id
         self._owner_email = calendar_owner_email
-        self._business_hours = business_hours
         self._tz = pytz.timezone(timezone)
         creds = _get_credentials()
         self._service = build("calendar", "v3", credentials=creds)
 
-    def _slot_key(self, d: date, t: time) -> str:
-        return f"slot_lock:{d.isoformat()}:{t.strftime('%H:%M')}"
+    def _range_key(self, checkin: date, checkout: date) -> str:
+        return f"range_lock:{checkin.isoformat()}:{checkout.isoformat()}"
 
-    def is_slot_available(self, d: date, start_time: time, duration_minutes: int) -> bool:
-        """Check Google Calendar + Redis locks."""
+    def is_range_available(self, checkin: date, checkout: date) -> bool:
+        """Check Google Calendar + Redis soft locks."""
         r = _get_redis()
-        if r and r.exists(self._slot_key(d, start_time)):
-            return False
+        if r:
+            # Check if any lock overlaps with this range
+            for key in r.keys("range_lock:*"):
+                key_str = key.decode("utf-8") if isinstance(key, bytes) else key
+                _, lock_checkin_str, lock_checkout_str = key_str.split(":")
+                lock_checkin = date.fromisoformat(lock_checkin_str)
+                lock_checkout = date.fromisoformat(lock_checkout_str)
+                # Overlap: max(start1, start2) < min(end1, end2)
+                if max(checkin, lock_checkin) < min(checkout, lock_checkout):
+                    return False
 
-        start_dt = self._tz.localize(datetime.combine(d, start_time))
-        end_dt = start_dt + timedelta(minutes=duration_minutes)
+        # Assuming checkin at 15:00, checkout at 10:00 as typical defaults if not provided.
+        # Hardcoding for now, should ideally come from config, but keeping it minimal.
+        start_time = time(15, 0)
+        end_time = time(10, 0)
+
+        start_dt = self._tz.localize(datetime.combine(checkin, start_time))
+        end_dt = self._tz.localize(datetime.combine(checkout, end_time))
 
         body = {
             "timeMin": start_dt.isoformat(),
@@ -72,34 +76,60 @@ class CalendarClient:
         busy = result["calendars"][self._calendar_id]["busy"]
         return len(busy) == 0
 
-    def lock_slot(self, d: date, start_time: time, ttl_seconds: int = 1800) -> None:
-        """Soft-lock a slot in Redis for TTL seconds (default 30 min)."""
+    def lock_range(self, checkin: date, checkout: date) -> None:
+        """Soft-lock a date range with no auto-expiry."""
         r = _get_redis()
         if r:
-            r.setex(self._slot_key(d, start_time), ttl_seconds, "1")
+            # No TTL, must be released explicitly
+            r.set(self._range_key(checkin, checkout), "1")
 
-    def release_slot(self, d: date, start_time: time) -> None:
+    def release_range(self, checkin: date, checkout: date) -> None:
         r = _get_redis()
         if r:
-            r.delete(self._slot_key(d, start_time))
+            r.delete(self._range_key(checkin, checkout))
 
     def create_event(
-        self, service_name: str, user_name: str, user_phone: str,
-        slot: Slot, duration_minutes: int, location_address: str,
-        price: int, cancellation_policy: str,
+        self, checkin_date: date = None, checkout_date: date = None,
+        guest_name: str = "", guest_phone: str = "", guests_count: int = 1,
+        total_price: int = 0, language: str = "en", payment_state: str = "pending",
+        request_id: str = "", **kwargs
     ) -> str:
-        start_dt = self._tz.localize(datetime.combine(slot.date, slot.start_time))
-        end_dt = start_dt + timedelta(minutes=duration_minutes)
+        # Fallback to old params for testing backward compat in main until fully refactored
+        if 'slot' in kwargs:
+            from dataclasses import dataclass
+            
+            @dataclass
+            class _Slot:
+                date: date
+                start_time: time
+                location: str
+
+            slot = kwargs.pop('slot')
+            checkin_date = slot.date
+            checkout_date = slot.date + timedelta(days=1)
+            # Recursively call standard interface
+            return self.create_event(
+                checkin_date=checkin_date, checkout_date=checkout_date,
+                guest_name=kwargs.get('user_name', ''), guest_phone=kwargs.get('user_phone', ''),
+                guests_count=1, total_price=kwargs.get('price', 0), language="en", payment_state="pending", request_id="compat"
+            )
+        start_time = time(15, 0)
+        end_time = time(10, 0)
+
+        start_dt = self._tz.localize(datetime.combine(checkin_date, start_time))
+        end_dt = self._tz.localize(datetime.combine(checkout_date, end_time))
 
         description = (
-            f"Service: {service_name}\n"
-            f"Price: ${price:,}\n"
-            f"Phone: {user_phone}"
+            f"Phone: {guest_phone}\n"
+            f"Guests: {guests_count}\n"
+            f"Total: ${total_price:,}\n"
+            f"Language: {language}\n"
+            f"Payment: {payment_state}\n"
+            f"Request ID: {request_id}"
         )
 
         event = {
-            "summary": f"{service_name} - {user_name}",
-            "location": location_address,
+            "summary": f"Stay - {guest_name}",
             "description": description,
             "start": {"dateTime": start_dt.isoformat(), "timeZone": str(self._tz)},
             "end": {"dateTime": end_dt.isoformat(), "timeZone": str(self._tz)},

@@ -274,20 +274,20 @@ Dependency: only if stdlib parsing is painful — add `icalendar` (one lib). Pre
 
 ## Explicit backlog (do not build now)
 
-- Approval timeout / reminder to family  
-- Embedded booking widget + live availability on site  
-- Italian e-invoicing  
-- Auto seasonal pricing  
-- Fully automatic confirm (no human)  
-- Write to OTA  
+- Approval timeout / reminder to family
+- Embedded booking widget + live availability on site
+- Italian e-invoicing
+- Auto seasonal pricing
+- Fully automatic confirm (no human)
+- Write to OTA
 
 ---
 
 ## Suggested first coding session
 
-1. Config rewrite + pricing pure functions + tests  
-2. Calendar range availability + create_event  
-3. Approval module + main.py gate  
+1. Config rewrite + pricing pure functions + tests
+2. Calendar range availability + create_event
+3. Approval module + main.py gate
 
 Then AI intents, Stripe, reminders, iCal, deploy, site.
 
@@ -295,8 +295,8 @@ Then AI intents, Stripe, reminders, iCal, deploy, site.
 
 ## Ponytail summary
 
-- **Reuse** Redis lock/pending patterns in `main.py`; same intent-JSON design.  
-- **One** approval module, not a workflow engine.  
-- **Manual** YAML for price/min stay/payment mode — no rule engine.  
-- **Cron HTTP** for reminders + iCal, not a second process framework.  
+- **Reuse** Redis lock/pending patterns in `main.py`; same intent-JSON design.
+- **One** approval module, not a workflow engine.
+- **Manual** YAML for price/min stay/payment mode — no rule engine.
+- **Cron HTTP** for reminders + iCal, not a second process framework.
 - **Skip** timeout, invoices, live web calendar until needed.
