@@ -82,16 +82,16 @@ See [DECISIONS.md](DECISIONS.md) for the full rationale behind each technical ch
 
 ### The Single-Number Approval Magic
 
-One of the most powerful features of this bot is that **the business only needs ONE WhatsApp Business API number**. 
+One of the most powerful features of this bot is that **the business only needs ONE WhatsApp Business API number**.
 
-You do not need separate WhatsApp numbers for the guests and the owners. 
+You do not need separate WhatsApp numbers for the guests and the owners.
 Here is exactly how `authorized_approvers` work under the hood:
 
 1. **Detection**: When a message arrives from WhatsApp, the very first thing the app does is check the sender's phone number against the `authorized_approvers` list in `config.yaml`.
 2. **Routing bypass**: If the sender is an owner (e.g., Marco or Anna), the message *bypasses the AI receptionist entirely*. The bot knows it's the boss talking, not a guest, so it routes the message straight to the Approval Module instead of Claude.
 3. **Fanning out requests**: When a guest requests a stay, the bot uses the single WhatsApp Business API number to send an outbound WhatsApp message to the personal phone numbers of Marco and Anna. To Marco and Anna, the request arrives as a normal WhatsApp chat message from their own B&B's business number.
 4. **Atomic claims**: When Marco replies `OK x1y2` from his personal WhatsApp app to the B&B number, the bot receives it, verifies he is an approver, and executes the calendar action. If Anna replies `OK x1y2` two seconds later, the bot checks Redis and replies to her saying *"Request x1y2 was already handled by Marco."*
-5. **Guest Notification**: After Marco approves, the bot sends the final confirmation message to the guest. 
+5. **Guest Notification**: After Marco approves, the bot sends the final confirmation message to the guest.
 
 The end result: Guests chat with the AI, while owners manage the B&B by simply chatting with their own bot.
 
@@ -117,16 +117,19 @@ cp .env.example .env
 ```
 
 Required:
+
 - `ANTHROPIC_API_KEY` -- [Get one here](https://console.anthropic.com/)
 - `WHATSAPP_ACCESS_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID` + `WHATSAPP_APP_SECRET` -- [Meta Developer Portal](https://developers.facebook.com/)
 - `WHATSAPP_VERIFY_TOKEN` -- any string you choose (must match webhook config)
 - `REDIS_URL` -- required for atomic approval locks
 
 For booking (required):
+
 - `GOOGLE_SERVICE_ACCOUNT_JSON` -- base64-encoded Google service account credentials
 - `GOOGLE_CALENDAR_ID` + `GOOGLE_CALENDAR_OWNER_EMAIL`
 
 Edit `config.yaml` with your business details:
+
 - **`authorized_approvers`**: list of phone numbers (e.g. `+393331234567`) that receive approval requests.
 - **`bot_persona`**: controls tone and whether it declares itself as AI.
 - **`booking`**: max guests, cancellation policies, pricing periods, and minimum stay periods.
@@ -149,29 +152,47 @@ uvicorn core.main:app --reload
 
 WhatsApp requires a public HTTPS URL to deliver incoming messages (webhooks). If you are running the app on your local computer, you must expose your local port `8000` to the internet using [ngrok](https://ngrok.com/).
 
-#### Step-by-step for ngrok:
+#### Step-by-step for ngrok
+
 1. **Sign up**: Go to [ngrok.com](https://ngrok.com/) and create a free account.
 2. **Install**: Download and install the ngrok agent for your operating system.
 3. **Authenticate**: Get your Authtoken from the ngrok dashboard and run:
+
    ```bash
    ngrok config add-authtoken <YOUR_AUTHTOKEN>
    ```
+
    *(Note: You do NOT need to put this token in your `.env` file. Ngrok saves it globally on your computer.)*
 4. **Run**: In a **second terminal window** (keep the `uvicorn` one running!), run:
+
    ```bash
    ngrok http 8000
    ```
 
 Ngrok will provide a "Forwarding" public URL (e.g., `https://a1b2c3d4.ngrok.app`). **Leave this terminal open too.**
 
-#### Configure the Meta webhook:
+#### Configure the Meta webhook
+
 Set the webhook URL in the [Meta Developer Portal](https://developers.facebook.com/) -> WhatsApp -> Configuration:
+
 - **Callback URL**: `https://your-ngrok-url.ngrok.app/webhook` (append `/webhook` to the ngrok URL)
 - **Verify token**: The exact string you set as `WHATSAPP_VERIFY_TOKEN` in your `.env` file.
 - Click "Verify and Save". Meta will send a test ping to your server.
 - **Webhooks Fields**: Click "Manage" under Webhooks fields, and subscribe to the `messages` event.
 
-### 5. Production Deployment (VPS)
+### 5. Send your first message
+
+Now that your server is running, ngrok is tunneling, and Meta is configured with the webhook:
+
+1. Use the WhatsApp Business "Test number" (provided in the Meta Developer portal) as the recipient.
+2. Ensure you have added your *personal* WhatsApp number to the Meta portal as a test recipient (under the "To" dropdown in the portal's quick start page).
+3. Send a message to the test number from your personal WhatsApp app.
+
+The message will flow from your phone -> Meta -> Ngrok -> your local Uvicorn app, and the AI will reply!
+
+> **Note on Test Numbers vs Real Numbers**: You can use the free test number (+1 555...) provided by Meta for all your development. However, test numbers can *only* send messages to phone numbers that you have explicitly verified as testers in the Meta portal. When you are ready to go live, you simply buy a cheap SIM card, register its real number in the Meta portal, and update your `.env` file.
+
+### 6. Production Deployment (VPS)
 
 Docker is used exclusively for deploying the app to a production server (VPS) where it must run 24/7. **You do not need Docker for local testing or development.**
 
@@ -235,6 +256,7 @@ booking:
 A directory containing plain text files (`.txt` format) for each supported language. When a guest messages the bot, their language is automatically detected, and the bot loads the corresponding knowledge base file to respond in that same language.
 
 Create these files in the `knowledge/` directory:
+
 - `it.txt` (Italian - acts as the default fallback)
 - `en.txt` (English)
 - `es.txt` (Spanish)
@@ -299,13 +321,44 @@ No issue template, no CLA. Just describe what you changed and why.
 
 ---
 
-## Community
+## script di avvio
 
-- **Issues**: [GitHub Issues](https://github.com/nuno80/whatsapp-ai-receptionist/issues) -- bug reports, feature requests, questions
-- **Discussions**: [GitHub Discussions](https://github.com/nuno80/whatsapp-ai-receptionist/discussions) -- ideas, show & tell, general chat
+Ho creato lo script bash e l'ho
+ già reso eseguibile.
 
----
+ Dato che volevi eseguire sia il
+ server Python (Uvicorn) che Ngrok,
+ il modo migliore è farli partire
+ insieme dalla stessa finestra: lo
+ script avvia prima il codice
+ Python "in background" (così non
+ blocca il terminale) e poi lancia
+ Ngrok sopra. Quando chiuderai
+ Ngrok premendo Ctrl+C, lo script
+ in automatico chiuderà anche l'app
+ Python.
 
-## License
+ Per avviarlo ti basta aprire il
+ tuo terminale e digitare:
 
-MIT
+ ```zsh
+
+ /home/nuno/programmazione//whatsapp-ai-receptionist/whatsapp-ai-receptionist/start.zsh
+ ```
+
+ Oppure, se ti trovi già nella
+ cartella del progetto:
+
+ ```zsh
+   ./start.zsh
+ ```
+
+ Appena lo lanci:
+
+ 1. Copia l'indirizzo HTTPS che
+    Ngrok ti mostra a schermo.
+ 2. Vai su Meta Developer e
+    incollalo aggiungendo /webhook
+    alla fine.
+ 3. Scrivi al tuo bot su WhatsApp
+    dal tuo telefono.
