@@ -18,6 +18,10 @@ def _anthropic_default_model() -> str:
     return os.environ.get("LLM_MODEL", "claude-3-5-sonnet-20241022")
 
 def _nvidia_default_model() -> str:
+    # If the base URL is Groq, default to Groq's llama model
+    base = os.environ.get("LLM_BASE_URL", "")
+    if "groq.com" in base:
+        return os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile")
     return os.environ.get("LLM_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
 
 def _model() -> str:
@@ -44,7 +48,7 @@ def get_client() -> anthropic.Anthropic | openai.OpenAI:
         else:
             _client = openai.OpenAI(
                 base_url=os.environ.get("LLM_BASE_URL", "https://integrate.api.nvidia.com/v1"),
-                api_key=_require_env("NVIDIA_API_KEY"),
+                api_key=_require_env("LLM_API_KEY") if os.environ.get("LLM_API_KEY") else _require_env("NVIDIA_API_KEY"),
             )
     return _client
 
