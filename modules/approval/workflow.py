@@ -104,23 +104,33 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
             
             if action == "OK":
                 cal.delete_event(req_data["event_id"])
-                cal.create_event(
-                    checkin_date=checkin,
-                    checkout_date=checkout,
-                    guest_name=req_data.get("guest_name", "Ospite"),
-                    guest_phone=guest_phone,
-                    guests_count=req_data.get("guests", 1),
-                    total_price=req_data.get("total", 0),
-                    language=req_data.get("lang", "it"),
-                    payment_state="pending",
-                    request_id=req_id
-                )
+                # Yellow → Green on the new event (already created at request time)
+                new_eid = req_data.get("new_event_id")
+                if new_eid:
+                    cal.confirm_event(new_eid)
+                else:
+                    # Backward compat: old requests without new_event_id
+                    cal.create_event(
+                        checkin_date=checkin,
+                        checkout_date=checkout,
+                        guest_name=req_data.get("guest_name", "Ospite"),
+                        guest_phone=guest_phone,
+                        guests_count=req_data.get("guests", 1),
+                        total_price=req_data.get("total", 0),
+                        language=req_data.get("lang", "it"),
+                        payment_state="pending",
+                        request_id=req_id
+                    )
                 if guest_phone:
                     await whatsapp_client.send_message(
                         to=guest_phone,
                         text=f"La tua modifica è stata confermata! Il nuovo totale è €{req_data.get('total', 0)}."
                     )
             else:
+                # Reject: remove the pending yellow event for new dates
+                new_eid = req_data.get("new_event_id")
+                if new_eid:
+                    cal.delete_event(new_eid)
                 if guest_phone:
                     await whatsapp_client.send_message(
                         to=guest_phone,
@@ -140,18 +150,24 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
                 
                 if config.get("modules", {}).get("payments") and payment_mode != "full_on_site":
                     payment_state = "pending"
-                    
-                event_id = cal.create_event(
-                    checkin_date=checkin,
-                    checkout_date=checkout,
-                    guest_name=req_data.get("guest_name", "Ospite"),
-                    guest_phone=guest_phone,
-                    guests_count=req_data.get("guests", 1),
-                    total_price=total,
-                    language=req_data.get("lang", "it"),
-                    payment_state=payment_state,
-                    request_id=req_id
-                )
+
+                event_id = req_data.get("event_id")
+                if event_id:
+                    # Yellow → Green (event already created at request time)
+                    cal.confirm_event(event_id)
+                else:
+                    # Backward compat: old requests without event_id
+                    event_id = cal.create_event(
+                        checkin_date=checkin,
+                        checkout_date=checkout,
+                        guest_name=req_data.get("guest_name", "Ospite"),
+                        guest_phone=guest_phone,
+                        guests_count=req_data.get("guests", 1),
+                        total_price=total,
+                        language=req_data.get("lang", "it"),
+                        payment_state=payment_state,
+                        request_id=req_id
+                    )
                 
                 if guest_phone:
                     if payment_state == "pending":
@@ -177,6 +193,10 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
                     else:
                         await whatsapp_client.send_message(to=guest_phone, text="Richiesta confermata! Confermata")
             else:
+                # Reject: remove the pending yellow event
+                event_id = req_data.get("event_id")
+                if event_id:
+                    cal.delete_event(event_id)
                 if guest_phone:
                     await whatsapp_client.send_message(to=guest_phone, text="Purtroppo non possiamo ospitarti per quelle date.")
 

@@ -504,6 +504,13 @@ async def _handle_booking_requested(phone: str, intent: dict, visible_response: 
         await WA.send_text(phone, error_msg)
         return
         
+    # Duplicate guard: guest already has a pending request for these dates
+    if cal.has_pending_lock(checkin_date, checkout_date, phone):
+        msg = "La tua richiesta è già in fase di approvazione. Ti avviserò appena avrò una risposta!"
+        HISTORY.add(phone, "assistant", msg)
+        await WA.send_text(phone, msg)
+        return
+
     if not cal.is_range_available(checkin_date, checkout_date, requester_phone=phone):
         error_msg = f"Purtroppo le date dal {checkin_date.strftime('%d/%m')} al {checkout_date.strftime('%d/%m')} non sono disponibili. Vuoi controllare altri giorni?"
         HISTORY.add(phone, "assistant", error_msg)
@@ -521,14 +528,28 @@ async def _handle_booking_requested(phone: str, intent: dict, visible_response: 
         HISTORY.add(phone, "assistant", error_msg)
         await WA.send_text(phone, error_msg)
         return
-        
+
+    # Create YELLOW event on Calendar immediately (visible to owners)
+    from core.phone import normalize_phone
+    guest_phone = normalize_phone(phone)
+
+    event_id = cal.create_event(
+        checkin_date=checkin_date,
+        checkout_date=checkout_date,
+        guest_name=intent.get("user_name", "Ospite"),
+        guest_phone=guest_phone,
+        guests_count=guests,
+        total_price=total_price,
+        language=intent.get("lang", "it"),
+        payment_state="pending_approval",
+        request_id="pending",
+        color_id=CalendarClient.COLOR_PENDING,
+    )
+
     cal.lock_range(checkin_date, checkout_date, requester_phone=phone)
     
     from modules.approval.workflow import create_request
     redis_client = _get_pending_payment_redis()
-    
-    from core.phone import normalize_phone
-    guest_phone = normalize_phone(phone)
 
     request_data = {
         "type": "create",
@@ -538,7 +559,8 @@ async def _handle_booking_requested(phone: str, intent: dict, visible_response: 
         "checkout": checkout_date.isoformat(),
         "guests": guests,
         "total": total_price,
-        "lang": intent.get("lang", "it")
+        "lang": intent.get("lang", "it"),
+        "event_id": event_id,
     }
     
     await create_request(redis_client, CONFIG, WA, request_data)
@@ -859,6 +881,20 @@ async def _handle_modification_confirmed(phone: str, intent: dict, visible_respo
 
     cal.lock_range(checkin_date, checkout_date, requester_phone=phone)
 
+    # Create YELLOW event for the new dates
+    new_event_id = cal.create_event(
+        checkin_date=checkin_date,
+        checkout_date=checkout_date,
+        guest_name=intent.get("user_name", "Ospite"),
+        guest_phone=phone,
+        guests_count=guests,
+        total_price=total_price,
+        language=intent.get("lang", "it"),
+        payment_state="pending_approval",
+        request_id="pending",
+        color_id=CalendarClient.COLOR_PENDING,
+    )
+
     try:
         from modules.approval.workflow import create_request
         redis_client = _get_pending_payment_redis()
@@ -868,6 +904,7 @@ async def _handle_modification_confirmed(phone: str, intent: dict, visible_respo
             "guest_phone": phone,
             "guest_name": intent.get("user_name", "Ospite"),
             "event_id": old_event["id"],
+            "new_event_id": new_event_id,
             "checkin": checkin_date.isoformat(),
             "checkout": checkout_date.isoformat(),
             "guests": guests,

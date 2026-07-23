@@ -85,7 +85,7 @@ def mock_redis_env(mocker):
     mocker.patch("core.main._get_pending_payment_redis", return_value=mock)
 
 def test_booking_intent_creates_approval_request(mocker, bypass_webhook_verification, mock_redis_env):
-    """When a guest requests a booking, it creates an approval request and a soft lock, NOT a calendar event."""
+    """When a guest requests a booking, it creates a YELLOW calendar event, a soft lock, and an approval request."""
     mocker.patch("core.main.CONFIG", {
         "client": {"name": "Test", "timezone": "Europe/Rome"},
         "modules": {"booking": True, "payments": False, "reminders": False},
@@ -104,6 +104,8 @@ def test_booking_intent_creates_approval_request(mocker, bypass_webhook_verifica
     })
     mock_calendar = mocker.MagicMock()
     mock_calendar.is_range_available.return_value = True
+    mock_calendar.has_pending_lock.return_value = False
+    mock_calendar.create_event.return_value = "evt_yellow_123"
     mocker.patch("core.main._get_calendar_client", return_value=mock_calendar)
     
     mock_send = mocker.patch("core.main.WA.send_text", new_callable=mocker.AsyncMock)
@@ -128,14 +130,18 @@ def test_booking_intent_creates_approval_request(mocker, bypass_webhook_verifica
 
     assert resp.status_code == 200
     
-    # Calendar event is NOT created
-    mock_calendar.create_event.assert_not_called()
+    # Yellow calendar event IS created immediately
+    mock_calendar.create_event.assert_called_once()
+    call_kwargs = mock_calendar.create_event.call_args
+    assert call_kwargs[1]["color_id"] == "5"  # Yellow = pending
     
     # Soft lock is created
     mock_calendar.lock_range.assert_called_once()
     
-    # Approval request is created
+    # Approval request is created (and includes event_id)
     mock_create_req.assert_called_once()
+    req_data = mock_create_req.call_args[0][3]  # 4th positional arg = data dict
+    assert req_data["event_id"] == "evt_yellow_123"
     
     # Guest is notified
     assert mock_send.called

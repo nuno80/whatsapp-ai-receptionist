@@ -127,11 +127,37 @@ class CalendarClient:
         if r:
             r.delete(self._range_key(checkin, checkout))
 
+    # Google Calendar color IDs
+    COLOR_PENDING = "5"   # Banana (yellow) — waiting for owner approval
+    COLOR_CONFIRMED = "10"  # Basil (green)  — owner approved
+
+    def confirm_event(self, event_id: str) -> None:
+        """Yellow → Green: owner approved the booking."""
+        self._service.events().patch(
+            calendarId=self._calendar_id,
+            eventId=event_id,
+            body={"colorId": self.COLOR_CONFIRMED},
+        ).execute()
+
+    def has_pending_lock(self, checkin: date, checkout: date, requester_phone: str) -> bool:
+        """Check if this requester already has a pending lock for overlapping dates."""
+        r = _get_redis()
+        if not r:
+            return False
+        for key in r.keys("range_lock:*"):
+            key_str = key.decode("utf-8") if isinstance(key, bytes) else key
+            _, lc, lo = key_str.split(":")
+            if max(checkin, date.fromisoformat(lc)) < min(checkout, date.fromisoformat(lo)):
+                owner = r.get(key)
+                if owner and (owner.decode("utf-8") if isinstance(owner, bytes) else owner) == requester_phone:
+                    return True
+        return False
+
     def create_event(
         self, checkin_date: date = None, checkout_date: date = None,
         guest_name: str = "", guest_phone: str = "", guests_count: int = 1,
         total_price: int = 0, language: str = "en", payment_state: str = "pending",
-        request_id: str = "", **kwargs
+        request_id: str = "", color_id: str = "10", **kwargs
     ) -> str:
         # Fallback to old params for testing backward compat in main until fully refactored
         if 'slot' in kwargs:
@@ -170,6 +196,7 @@ class CalendarClient:
         event = {
             "summary": f"Stay - {guest_name}",
             "description": description,
+            "colorId": color_id,
             "start": {"dateTime": start_dt.isoformat(), "timeZone": str(self._tz)},
             "end": {"dateTime": end_dt.isoformat(), "timeZone": str(self._tz)},
             "reminders": {"useDefault": False, "overrides": []},
