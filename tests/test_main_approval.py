@@ -16,7 +16,7 @@ def override_deps(mock_redis):
 @pytest.fixture
 def mock_wa():
     with patch("core.main.WA") as mock:
-        mock.send_message = AsyncMock()
+        mock.send_text = AsyncMock()
         mock.send_text = AsyncMock()
         yield mock
 

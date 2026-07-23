@@ -18,8 +18,10 @@ def _get_calendar_client(config: dict) -> CalendarClient | None:
     return None
 
 def is_approver(phone: str, config: dict) -> str | None:
+    from core.phone import normalize_phone
+    target = normalize_phone(phone)
     for approver in config.get("authorized_approvers", []):
-        if approver["phone"] == phone:
+        if normalize_phone(approver["phone"]) == target:
             return approver["name"]
     return None
 
@@ -43,7 +45,9 @@ async def create_request(redis_client: redis.Redis, config: dict, whatsapp_clien
     )
     
     for approver in config.get("authorized_approvers", []):
-        await whatsapp_client.send_message(to=approver["phone"], text=text)
+        from core.phone import normalize_phone
+        target_phone = normalize_phone(approver["phone"])
+        await whatsapp_client.send_text(to=target_phone, text=text)
         
     return req_id
 
@@ -70,7 +74,7 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
         else:
             list_text = "\n".join([f"- {i}" for i in pending])
             msg = f"Ci sono più richieste in attesa. Rispondi con OK <id> o NO <id>:\n{list_text}"
-            await whatsapp_client.send_message(to=phone, text=msg)
+            await whatsapp_client.send_text(to=phone, text=msg)
             return "pending_list"
             
     if req_id not in pending and f"approval:{req_id}" not in pending:
@@ -84,7 +88,7 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
     if not won:
         winner = redis_client.get(claim_key)
         winner_name = winner.decode('utf-8') if isinstance(winner, bytes) else winner
-        await whatsapp_client.send_message(to=phone, text=f"Richiesta {req_id} già gestita da {winner_name}.")
+        await whatsapp_client.send_text(to=phone, text=f"Richiesta {req_id} già gestita da {winner_name}.")
         return "already_claimed"
         
     # We won the claim. Process the outcome
@@ -122,7 +126,7 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
                         request_id=req_id
                     )
                 if guest_phone:
-                    await whatsapp_client.send_message(
+                    await whatsapp_client.send_text(
                         to=guest_phone,
                         text=f"La tua modifica è stata confermata! Il nuovo totale è €{req_data.get('total', 0)}."
                     )
@@ -132,7 +136,7 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
                 if new_eid:
                     cal.delete_event(new_eid)
                 if guest_phone:
-                    await whatsapp_client.send_message(
+                    await whatsapp_client.send_text(
                         to=guest_phone,
                         text="La tua richiesta di modifica non è stata approvata. Il soggiorno originale rimane confermato."
                     )
@@ -189,16 +193,16 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
                         else:
                             msg = f"Richiesta confermata! Per completare la prenotazione, effettua il pagamento di €{amount_eur:.2f}. Clicca qui: {link}"
                             
-                        await whatsapp_client.send_message(to=guest_phone, text=msg)
+                        await whatsapp_client.send_text(to=guest_phone, text=msg)
                     else:
-                        await whatsapp_client.send_message(to=guest_phone, text="Richiesta confermata! Confermata")
+                        await whatsapp_client.send_text(to=guest_phone, text="Richiesta confermata! Confermata")
             else:
                 # Reject: remove the pending yellow event
                 event_id = req_data.get("event_id")
                 if event_id:
                     cal.delete_event(event_id)
                 if guest_phone:
-                    await whatsapp_client.send_message(to=guest_phone, text="Purtroppo non possiamo ospitarti per quelle date.")
+                    await whatsapp_client.send_text(to=guest_phone, text="Purtroppo non possiamo ospitarti per quelle date.")
 
         if req_type == "cancel" and cal and "event_id" in req_data:
             if action == "OK":
@@ -240,18 +244,20 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
                 policy_msg = "La cancellazione è gratuita in base ai termini." if is_free else "Verrà applicata la penale di cancellazione come da termini del soggiorno."
                 
                 if guest_phone:
-                    await whatsapp_client.send_message(to=guest_phone, text=f"La tua cancellazione è stata confermata.\n{policy_msg}")
+                    await whatsapp_client.send_text(to=guest_phone, text=f"La tua cancellazione è stata confermata.\n{policy_msg}")
             else:
                 if guest_phone:
-                    await whatsapp_client.send_message(to=guest_phone, text="La tua richiesta di cancellazione non è stata approvata. Il soggiorno rimane confermato.")
+                    await whatsapp_client.send_text(to=guest_phone, text="La tua richiesta di cancellazione non è stata approvata. Il soggiorno rimane confermato.")
 
 
                 
     # Notify other approvers
     for approver in config.get("authorized_approvers", []):
-        if approver["phone"] != phone:
-            await whatsapp_client.send_message(
-                to=approver["phone"], 
+        from core.phone import normalize_phone
+        target_phone = normalize_phone(approver["phone"])
+        if target_phone != phone:
+            await whatsapp_client.send_text(
+                to=target_phone, 
                 text=f"Richiesta {req_id} approvata da {approver_name}." if action == "OK" else f"Richiesta {req_id} rifiutata da {approver_name}."
             )
             
