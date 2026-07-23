@@ -56,7 +56,11 @@ def get_client() -> anthropic.Anthropic | openai.OpenAI:
 def load_knowledge(lang: str = "it") -> str:
     path = f"knowledge/{lang}.txt"
     try:
-        return Path(path).read_text(encoding="utf-8")
+        content = Path(path).read_text(encoding="utf-8").strip()
+        if content:
+            return content
+        # Empty file — treat as missing
+        raise FileNotFoundError(path)
     except FileNotFoundError:
         if lang != "it":
             logger.warning("Knowledge file not found for %s, falling back to 'it'.", lang)
