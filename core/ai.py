@@ -131,7 +131,7 @@ def build_system_prompt(config: dict, knowledge: str, free_ranges: list[dict] = 
             "When the guest asks about price, calculate the total based on these rules and tell them.",
             "",
             f"Pre-calculated free dates for stays:\n{ranges_text}",
-            "IMPORTANT: ONLY offer dates that fall within the pre-calculated free dates above. The server validation always wins.",
+            "IMPORTANT: ONLY offer dates that fall completely within the pre-calculated free dates above. Do not merge disjoint date ranges in your responses.",
             "",
             "To book a stay, you need:",
             "1. Check-in date",
