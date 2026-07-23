@@ -952,3 +952,40 @@ async def trigger_sync_ota(request: Request):
 
     await sync_ota(CONFIG, cal)
     return {"status": "ok"}
+
+
+@app.post("/internal/reset-guest")
+async def reset_guest(request: Request):
+    """Flush conversation history and stale locks for a phone number.
+    Body: {"phone": "393331234567"}
+    """
+    secret = request.headers.get("X-Internal-Secret", "")
+    if secret != INTERNAL_SECRET:
+        raise HTTPException(status_code=403)
+
+    data = await request.json()
+    phone = data.get("phone", "")
+    if not phone:
+        raise HTTPException(status_code=400, detail="phone required")
+
+    cleaned = []
+
+    # 1. Clear conversation history
+    HISTORY._store.pop(phone, None) if hasattr(HISTORY, '_store') else None
+    r = _get_pending_payment_redis()
+    if r:
+        if r.delete(f"history:{phone}"):
+            cleaned.append("history")
+        # 2. Remove any range locks owned by this phone
+        for key in r.keys("range_lock:*"):
+            owner = r.get(key)
+            owner_str = owner.decode("utf-8") if isinstance(owner, bytes) else owner
+            if owner_str == phone:
+                r.delete(key)
+                cleaned.append(f"lock:{key.decode() if isinstance(key, bytes) else key}")
+        # 3. Clear pending modification/cancellation state
+        r.delete(f"pending_modification:{phone}")
+        r.delete(f"pending_cancellation:{phone}")
+        r.delete(f"guest_lang:{phone}")
+
+    return {"phone": phone, "cleaned": cleaned}

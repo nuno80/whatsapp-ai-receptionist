@@ -63,7 +63,7 @@ def test_soft_lock_and_release(monkeypatch):
     monkeypatch.setattr("modules.booking.calendar._get_redis", lambda: mock_redis)
     
     client.lock_range(date(2026, 3, 16), date(2026, 3, 18))
-    mock_redis.set.assert_called_with("range_lock:2026-03-16:2026-03-18", "1") # no auto-expiry
+    mock_redis.set.assert_called_with("range_lock:2026-03-16:2026-03-18", "1", ex=86400)
     
     client.release_range(date(2026, 3, 16), date(2026, 3, 18))
     mock_redis.delete.assert_called_with("range_lock:2026-03-16:2026-03-18")

@@ -112,15 +112,15 @@ class CalendarClient:
         return len(busy) == 0
 
     def lock_range(self, checkin: date, checkout: date, requester_phone: str = "1") -> None:
-        """Soft-lock a date range with no auto-expiry.
+        """Soft-lock a date range.
 
         Stores requester_phone as the value so is_range_available() can later
         recognize "this lock is mine" and not block the same requester.
+        TTL of 24h prevents orphan locks if the owner never responds.
         """
         r = _get_redis()
         if r:
-            # No TTL, must be released explicitly
-            r.set(self._range_key(checkin, checkout), requester_phone)
+            r.set(self._range_key(checkin, checkout), requester_phone, ex=86400)
 
     def release_range(self, checkin: date, checkout: date) -> None:
         r = _get_redis()
