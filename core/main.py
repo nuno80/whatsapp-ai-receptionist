@@ -504,7 +504,7 @@ async def _handle_booking_requested(phone: str, intent: dict, visible_response: 
         await WA.send_text(phone, error_msg)
         return
         
-    if not cal.is_range_available(checkin_date, checkout_date):
+    if not cal.is_range_available(checkin_date, checkout_date, requester_phone=phone):
         error_msg = f"Purtroppo le date dal {checkin_date.strftime('%d/%m')} al {checkout_date.strftime('%d/%m')} non sono disponibili. Vuoi controllare altri giorni?"
         HISTORY.add(phone, "assistant", error_msg)
         await WA.send_text(phone, error_msg)
@@ -522,7 +522,7 @@ async def _handle_booking_requested(phone: str, intent: dict, visible_response: 
         await WA.send_text(phone, error_msg)
         return
         
-    cal.lock_range(checkin_date, checkout_date)
+    cal.lock_range(checkin_date, checkout_date, requester_phone=phone)
     
     from modules.approval.workflow import create_request
     redis_client = _get_pending_payment_redis()
@@ -838,7 +838,7 @@ async def _handle_modification_confirmed(phone: str, intent: dict, visible_respo
         return
 
     # Verify new availability excluding old event
-    if not cal.is_range_available(checkin_date, checkout_date, exclude_event_id=old_event["id"]):
+    if not cal.is_range_available(checkin_date, checkout_date, requester_phone=phone, exclude_event_id=old_event["id"]):
         error_msg = f"Purtroppo le date dal {checkin_date.strftime('%d/%m')} al {checkout_date.strftime('%d/%m')} non sono disponibili. Vuoi controllare altri giorni?"
         HISTORY.add(phone, "assistant", error_msg)
         await WA.send_text(phone, error_msg)
@@ -857,7 +857,7 @@ async def _handle_modification_confirmed(phone: str, intent: dict, visible_respo
         await WA.send_text(phone, error_msg)
         return
 
-    cal.lock_range(checkin_date, checkout_date)
+    cal.lock_range(checkin_date, checkout_date, requester_phone=phone)
 
     try:
         from modules.approval.workflow import create_request

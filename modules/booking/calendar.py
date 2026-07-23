@@ -45,8 +45,23 @@ class CalendarClient:
     def _range_key(self, checkin: date, checkout: date) -> str:
         return f"range_lock:{checkin.isoformat()}:{checkout.isoformat()}"
 
-    def is_range_available(self, checkin: date, checkout: date) -> bool:
-        """Check Google Calendar + Redis soft locks."""
+    def is_range_available(
+        self,
+        checkin: date,
+        checkout: date,
+        requester_phone: str | None = None,
+        exclude_event_id: str | None = None,
+    ) -> bool:
+        """Check Google Calendar + Redis soft locks.
+
+        A lock created by the same requester (e.g. their own still-pending
+        approval request) never blocks that same requester — otherwise a
+        guest confirming their own booking collides with the lock the bot
+        itself created moments earlier for the very same request.
+
+        exclude_event_id lets a modification flow check availability while
+        ignoring the guest's own existing event for that stay.
+        """
         r = _get_redis()
         if r:
             # Check if any lock overlaps with this range
@@ -57,6 +72,11 @@ class CalendarClient:
                 lock_checkout = date.fromisoformat(lock_checkout_str)
                 # Overlap: max(start1, start2) < min(end1, end2)
                 if max(checkin, lock_checkin) < min(checkout, lock_checkout):
+                    if requester_phone:
+                        lock_owner = r.get(key)
+                        lock_owner_str = lock_owner.decode("utf-8") if isinstance(lock_owner, bytes) else lock_owner
+                        if lock_owner_str == requester_phone:
+                            continue  # it's our own pending request, not a real conflict
                     return False
 
         # Assuming checkin at 15:00, checkout at 10:00 as typical defaults if not provided.
@@ -67,6 +87,21 @@ class CalendarClient:
         start_dt = self._tz.localize(datetime.combine(checkin, start_time))
         end_dt = self._tz.localize(datetime.combine(checkout, end_time))
 
+        if exclude_event_id:
+            # freebusy() only returns busy time ranges, not event ids, so it
+            # can't exclude a specific event. List events in range instead.
+            result = self._service.events().list(
+                calendarId=self._calendar_id,
+                timeMin=start_dt.isoformat(),
+                timeMax=end_dt.isoformat(),
+                singleEvents=True,
+            ).execute()
+            for event in result.get("items", []):
+                if event["id"] == exclude_event_id:
+                    continue
+                return False
+            return True
+
         body = {
             "timeMin": start_dt.isoformat(),
             "timeMax": end_dt.isoformat(),
@@ -76,12 +111,16 @@ class CalendarClient:
         busy = result["calendars"][self._calendar_id]["busy"]
         return len(busy) == 0
 
-    def lock_range(self, checkin: date, checkout: date) -> None:
-        """Soft-lock a date range with no auto-expiry."""
+    def lock_range(self, checkin: date, checkout: date, requester_phone: str = "1") -> None:
+        """Soft-lock a date range with no auto-expiry.
+
+        Stores requester_phone as the value so is_range_available() can later
+        recognize "this lock is mine" and not block the same requester.
+        """
         r = _get_redis()
         if r:
             # No TTL, must be released explicitly
-            r.set(self._range_key(checkin, checkout), "1")
+            r.set(self._range_key(checkin, checkout), requester_phone)
 
     def release_range(self, checkin: date, checkout: date) -> None:
         r = _get_redis()
