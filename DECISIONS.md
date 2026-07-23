@@ -64,8 +64,18 @@ Technical decisions made during development, with rationale. Written for hiring 
 
 **Why:** Not every business needs online payments with their booking system. Many professionals (especially in Latin America) prefer to collect payment in person. Making it optional keeps the core booking flow simple while allowing payment when needed.
 
-## HMAC signature validation on all webhooks
+## Dual-state Calendar events (Yellow/Green)
 
-**Decision:** Both the WhatsApp webhook and the Mercado Pago webhook validate incoming requests using HMAC-SHA256 signatures with `hmac.compare_digest` (constant-time comparison).
+**Decision:** Booking requests instantly create a YELLOW (colorId: 5) event on Google Calendar. It turns GREEN (colorId: 10) only when the owner replies "OK". If they reply "NO", the event is deleted.
 
-**Why:** Webhooks are public endpoints. Without signature validation, anyone could trigger fake bookings or fake payment confirmations. Constant-time comparison prevents timing attacks.
+**Why:** Owners need immediate visibility of pending requests directly in their native Calendar app before even checking WhatsApp. By creating the event immediately in a "pending" color, the Google Calendar `freebusy` query automatically blocks those dates from other guests, relying on Google as the source of truth rather than solely depending on temporary Redis locks.
+
+**Trade-off:** The calendar shows provisional data, but the color-coding (Yellow=Pending, Green=Confirmed) prevents confusion.
+
+## Synchronous Redis for Approval Workflow
+
+**Decision:** The `modules/approval/workflow.py` uses the standard synchronous `redis` client without `await`, matching the rest of the app (`core/main.py`, `modules/booking/calendar.py`).
+
+**Why:** Mixing synchronous Redis instances (from `import redis`) with asynchronous `await redis_client.set()` calls causes a `TypeError: 'bool' object can't be awaited` in ASGI apps (like FastAPI/Uvicorn), leading to 500 Internal Server Errors. Sticking to a strictly synchronous Redis client across all modules prevents this completely.
+
+**Trade-off:** Minimal performance hit from blocking I/O on Redis operations compared to async, but since Redis operations are sub-millisecond, it's negligible compared to the stability gain.
