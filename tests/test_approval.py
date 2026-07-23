@@ -31,7 +31,7 @@ def test_is_approver(mock_config):
 async def test_create_request_fans_out(mock_redis, mock_config, mock_whatsapp):
     request_data = {"type": "create", "guest_phone": "+1234", "guest_name": "John", "total": 240, "dates": "10-12 Oct"}
     
-    mock_redis.set = AsyncMock(return_value=True)
+    mock_redis.set = MagicMock(return_value=True)
     
     req_id = await create_request(mock_redis, mock_config, mock_whatsapp, request_data)
     
@@ -47,7 +47,7 @@ async def test_create_request_fans_out(mock_redis, mock_config, mock_whatsapp):
 @pytest.mark.asyncio
 async def test_handle_approval_multiple_pending_requires_id(mock_redis, mock_config, mock_whatsapp):
     # Setup redis to return multiple pending
-    mock_redis.keys = AsyncMock(return_value=[b"approval:req1", b"approval:req2"])
+    mock_redis.keys = MagicMock(return_value=[b"approval:req1", b"approval:req2"])
     
     # Approver sends bare OK
     result = await handle_approval_message(mock_redis, mock_config, mock_whatsapp, "+393000000001", "OK")
@@ -58,10 +58,10 @@ async def test_handle_approval_multiple_pending_requires_id(mock_redis, mock_con
 
 @pytest.mark.asyncio
 async def test_handle_approval_claim_wins_ok(mock_redis, mock_config, mock_whatsapp, mocker):
-    mock_redis.keys = AsyncMock(return_value=[b"approval:r123"])
-    mock_redis.get = AsyncMock(return_value=b'{"type": "create", "guest_phone": "+1234", "checkin": "2026-03-16", "checkout": "2026-03-18", "guests": 2, "total": 200, "lang": "it", "guest_name": "Jane"}')
-    mock_redis.setnx = AsyncMock(return_value=True) # Claim won
-    mock_redis.delete = AsyncMock(return_value=1)
+    mock_redis.keys = MagicMock(return_value=[b"approval:r123"])
+    mock_redis.get = MagicMock(return_value=b'{"type": "create", "guest_phone": "+1234", "checkin": "2026-03-16", "checkout": "2026-03-18", "guests": 2, "total": 200, "lang": "it", "guest_name": "Jane"}')
+    mock_redis.setnx = MagicMock(return_value=True) # Claim won
+    mock_redis.delete = MagicMock(return_value=1)
     
     mock_cal = MagicMock()
     mocker.patch("modules.approval.workflow._get_calendar_client", return_value=mock_cal)
@@ -86,10 +86,10 @@ async def test_handle_approval_claim_wins_ok(mock_redis, mock_config, mock_whats
 
 @pytest.mark.asyncio
 async def test_handle_approval_claim_wins_no(mock_redis, mock_config, mock_whatsapp, mocker):
-    mock_redis.keys = AsyncMock(return_value=[b"approval:r123"])
-    mock_redis.get = AsyncMock(return_value=b'{"type": "create", "guest_phone": "+1234", "checkin": "2026-03-16", "checkout": "2026-03-18"}')
-    mock_redis.setnx = AsyncMock(return_value=True) # Claim won
-    mock_redis.delete = AsyncMock(return_value=1)
+    mock_redis.keys = MagicMock(return_value=[b"approval:r123"])
+    mock_redis.get = MagicMock(return_value=b'{"type": "create", "guest_phone": "+1234", "checkin": "2026-03-16", "checkout": "2026-03-18"}')
+    mock_redis.setnx = MagicMock(return_value=True) # Claim won
+    mock_redis.delete = MagicMock(return_value=1)
     
     mock_cal = MagicMock()
     mocker.patch("modules.approval.workflow._get_calendar_client", return_value=mock_cal)
@@ -109,16 +109,16 @@ async def test_handle_approval_claim_wins_no(mock_redis, mock_config, mock_whats
 
 @pytest.mark.asyncio
 async def test_handle_approval_cancel_wins_ok(mock_redis, mock_config, mock_whatsapp, mocker):
-    mock_redis.keys = AsyncMock(return_value=[b"approval:r123"])
-    mock_redis.setnx = AsyncMock(return_value=True) # Claim won
-    mock_redis.delete = AsyncMock(return_value=1)
+    mock_redis.keys = MagicMock(return_value=[b"approval:r123"])
+    mock_redis.setnx = MagicMock(return_value=True) # Claim won
+    mock_redis.delete = MagicMock(return_value=1)
     
     mock_cal = MagicMock()
     mocker.patch("modules.approval.workflow._get_calendar_client", return_value=mock_cal)
     
     mock_config["booking"] = {"cancellation_policy": {"free_cancellation_days_before": 7}}
     
-    mock_redis.get = AsyncMock(return_value=b'{"type": "cancel", "guest_phone": "+1234", "event_id": "event_1", "checkin_str": "Monday March 16, 2030"}')
+    mock_redis.get = MagicMock(return_value=b'{"type": "cancel", "guest_phone": "+1234", "event_id": "event_1", "checkin_str": "Monday March 16, 2030"}')
     
     result = await handle_approval_message(mock_redis, mock_config, mock_whatsapp, "+393000000001", "OK r123")
     
@@ -134,15 +134,15 @@ async def test_handle_approval_cancel_wins_ok(mock_redis, mock_config, mock_what
     assert "confermata" in guest_call.kwargs['text']
 @pytest.mark.asyncio
 async def test_handle_approval_claim_loses(mock_redis, mock_config, mock_whatsapp):
-    mock_redis.keys = AsyncMock(return_value=[b"approval:r123"])
+    mock_redis.keys = MagicMock(return_value=[b"approval:r123"])
     
-    async def mock_get(key):
+    def mock_get(key):
         if b"claim" in (key.encode() if isinstance(key, str) else key):
             return b'Marco'
         return b'{"type": "create", "guest_phone": "+1234"}'
         
-    mock_redis.get = AsyncMock(side_effect=mock_get)
-    mock_redis.setnx = AsyncMock(return_value=False) # Claim lost
+    mock_redis.get = MagicMock(side_effect=mock_get)
+    mock_redis.setnx = MagicMock(return_value=False) # Claim lost
     
     result = await handle_approval_message(mock_redis, mock_config, mock_whatsapp, "+393000000001", "OK r123")
     

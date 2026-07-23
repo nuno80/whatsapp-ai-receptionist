@@ -1,7 +1,7 @@
 import json
 import random
 import string
-import redis.asyncio as redis
+import redis
 from datetime import date
 from modules.booking.calendar import CalendarClient
 
@@ -24,14 +24,14 @@ def is_approver(phone: str, config: dict) -> str | None:
     return None
 
 async def get_pending_requests(redis_client: redis.Redis) -> list[str]:
-    keys = await redis_client.keys("approval:*")
+    keys = redis_client.keys("approval:*")
     # Filter out claim keys
     req_keys = [k.decode('utf-8') if isinstance(k, bytes) else k for k in keys if b"claim" not in (k if isinstance(k, bytes) else k.encode('utf-8'))]
     return [k.replace("approval:", "") for k in req_keys]
 
 async def create_request(redis_client: redis.Redis, config: dict, whatsapp_client, data: dict) -> str:
     req_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
-    await redis_client.set(f"approval:{req_id}", json.dumps(data))
+    redis_client.set(f"approval:{req_id}", json.dumps(data))
     
     text = (
         f"Nuova richiesta {req_id} ({data.get('type')}):\n"
@@ -79,16 +79,16 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
         
     # Attempt claim
     claim_key = f"approval:claim:{req_id}"
-    won = await redis_client.setnx(claim_key, approver_name)
+    won = redis_client.setnx(claim_key, approver_name)
     
     if not won:
-        winner = await redis_client.get(claim_key)
+        winner = redis_client.get(claim_key)
         winner_name = winner.decode('utf-8') if isinstance(winner, bytes) else winner
         await whatsapp_client.send_message(to=phone, text=f"Richiesta {req_id} già gestita da {winner_name}.")
         return "already_claimed"
         
     # We won the claim. Process the outcome
-    req_data_raw = await redis_client.get(f"approval:{req_id}")
+    req_data_raw = redis_client.get(f"approval:{req_id}")
     if req_data_raw:
         req_data = json.loads(req_data_raw)
         guest_phone = req_data.get("guest_phone")
@@ -256,6 +256,6 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
             )
             
     # Remove from pending
-    await redis_client.delete(f"approval:{req_id}")
+    redis_client.delete(f"approval:{req_id}")
     
     return "approved" if action == "OK" else "rejected"
