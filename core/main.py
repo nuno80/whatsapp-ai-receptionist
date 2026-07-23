@@ -2,7 +2,7 @@ import json as json_lib
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import date, time as dt_time
+from datetime import date, datetime, time as dt_time
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
@@ -167,11 +167,53 @@ def _set_guest_lang(phone: str, lang: str):
     if r:
         r.set(f"guest_lang:{phone}", lang)
 
-def _get_free_ranges(cal: CalendarClient) -> list[dict]:
-    """Stub to get free ranges for the AI prompt. Real implementation depends on calendar sweep."""
+def _get_free_ranges(cal: CalendarClient, days_ahead: int = 90) -> list[dict]:
+    """Query Google Calendar freebusy for the next N days, return free date ranges."""
     from datetime import date, timedelta
+    import pytz
+
     today = date.today()
-    return [{"start": (today + timedelta(days=1)).isoformat(), "end": (today + timedelta(days=3)).isoformat()}]
+    tz = cal._tz
+    start_dt = tz.localize(datetime.combine(today + timedelta(days=1), dt_time(0, 0)))
+    end_dt = tz.localize(datetime.combine(today + timedelta(days=days_ahead), dt_time(23, 59)))
+
+    try:
+        result = cal._service.freebusy().query(body={
+            "timeMin": start_dt.isoformat(),
+            "timeMax": end_dt.isoformat(),
+            "items": [{"id": cal._calendar_id}],
+        }).execute()
+        busy_periods = result["calendars"][cal._calendar_id]["busy"]
+    except Exception as e:
+        logger.error("freebusy query failed: %s", e)
+        return []
+
+    # Convert busy periods to a set of occupied dates
+    busy_dates: set[date] = set()
+    for bp in busy_periods:
+        bs = date.fromisoformat(bp["start"][:10])
+        be = date.fromisoformat(bp["end"][:10])
+        d = bs
+        while d <= be:
+            busy_dates.add(d)
+            d += timedelta(days=1)
+
+    # Build free ranges from consecutive free days
+    ranges: list[dict] = []
+    range_start = None
+    for i in range(1, days_ahead + 1):
+        d = today + timedelta(days=i)
+        if d not in busy_dates:
+            if range_start is None:
+                range_start = d
+        else:
+            if range_start is not None:
+                ranges.append({"start": range_start.isoformat(), "end": (d - timedelta(days=1)).isoformat()})
+                range_start = None
+    if range_start is not None:
+        ranges.append({"start": range_start.isoformat(), "end": (today + timedelta(days=days_ahead)).isoformat()})
+
+    return ranges
 
 def _get_and_delete_pending_payment(payment: dict) -> dict | None:
     """Look up pending payment using external_reference from the MP payment object."""

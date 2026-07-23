@@ -100,10 +100,32 @@ def build_system_prompt(config: dict, knowledge: str, free_ranges: list[dict] = 
         if free_ranges:
             ranges_text = "\n".join([f"- From {r['start']} to {r['end']}" for r in free_ranges])
 
+        # Build pricing summary for Claude
+        pricing_lines = []
+        for p in booking.get("pricing_periods", []):
+            dow = p.get("days_of_week")
+            day_names = {1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 7: "Sun"}
+            if dow:
+                days = ", ".join(day_names.get(d, str(d)) for d in dow)
+                pricing_lines.append(f"- {p['start_date']} to {p['end_date']} ({days}): €{p['price_per_night']}/night")
+            else:
+                pricing_lines.append(f"- {p['start_date']} to {p['end_date']}: €{p['price_per_night']}/night")
+        pricing_text = "\n".join(pricing_lines) if pricing_lines else "See knowledge base."
+
+        min_stay = booking.get("minimum_stay_periods", [])
+        min_stay_text = ", ".join(f"{m['start_date']} to {m['end_date']}: {m['min_nights']} nights" for m in min_stay) if min_stay else "None"
+
         lines += [
             "",
             "BOOKINGS (STAYS):",
             today_str,
+            f"Check-in: {booking.get('checkin_time', '15:00')}, Check-out: {booking.get('checkout_time', '10:00')}",
+            f"Max guests: {booking.get('max_guests', 2)}",
+            f"Minimum stay: {min_stay_text}",
+            "",
+            f"PRICING (last matching rule wins, day-of-week rules override base):\n{pricing_text}",
+            "When the guest asks about price, calculate the total based on these rules and tell them.",
+            "",
             f"Pre-calculated free dates for stays:\n{ranges_text}",
             "IMPORTANT: ONLY offer dates that fall within the pre-calculated free dates above. The server validation always wins.",
             "",
