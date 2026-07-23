@@ -14,13 +14,13 @@ A specialized WhatsApp AI receptionist for Bed & Breakfasts and short-term renta
 
 | Capability | How |
 |---|---|
-| **Conversational booking** | Natural language via WhatsApp, powered by Claude 3.5 Sonnet |
-| **Real-time availability** | Google Calendar freebusy integration for consecutive night stays |
+| **Conversational booking** | Natural language via WhatsApp (supports Anthropic Claude, Groq/Llama, NVIDIA NIM) |
+| **Real-time availability** | Google Calendar freebusy scan (next 90 days) for consecutive night stays |
 | **Atomic Approvals** | All requests are routed to human owners for approval via WhatsApp before confirming |
 | **Full lifecycle** | Create, cancel, and modify stays |
 | **Voice messages** | Audio transcribed via OpenAI Whisper |
 | **Multi-Language** | Detects user language (IT, EN, ES, FR, DE) and switches knowledge base and replies dynamically |
-| **Pricing Rules** | Built-in rules engine for nightly pricing, date periods, and minimum stays |
+| **Pricing Rules** | Built-in rules engine for nightly pricing, date periods, day-of-week overrides, and minimum stays |
 | **Multi-client ready** | YAML config + knowledge base per business, no code changes |
 | **Resilient state** | Redis in production, in-memory fallback for development |
 
@@ -38,7 +38,7 @@ Guest sends WhatsApp message
          │
          ▼
 ┌─────────────────┐     ┌───────────────────────┐
-│   Claude AI     │ ◄───│  Knowledge base       │
+│    LLM AI       │ ◄───│  Knowledge base       │
 │  (conversation) │     │  config.yaml + IT/EN/..│
 └────────┬────────┘     └───────────────────────┘
          │
@@ -72,7 +72,7 @@ Guest sends WhatsApp message
 ## Design principles
 
 - **Human-in-the-loop.** All booking creation, modification, and cancellation requests require explicit approval from the host(s).
-- **No frameworks for the sake of frameworks.** Plain FastAPI with direct Anthropic SDK calls. No LangChain, no LangGraph. The problem is solved by direct API calls.
+- **No frameworks for the sake of frameworks.** Plain FastAPI with direct LLM SDK calls. No LangChain, no LangGraph. The problem is solved by direct API calls.
 - **Config-driven, not code-driven.** New clients are onboarded by editing `config.yaml` and `knowledge/{lang}.txt`. No code changes, no admin panel.
 - **Works offline from Redis.** Every stateful component has a Redis backend and an in-memory fallback. Run locally with zero infrastructure.
 
@@ -118,10 +118,15 @@ cp .env.example .env
 
 Required:
 
-- `ANTHROPIC_API_KEY` -- [Get one here](https://console.anthropic.com/)
 - `WHATSAPP_ACCESS_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID` + `WHATSAPP_APP_SECRET` -- [Meta Developer Portal](https://developers.facebook.com/)
 - `WHATSAPP_VERIFY_TOKEN` -- any string you choose (must match webhook config)
 - `REDIS_URL` -- required for atomic approval locks
+
+LLM provider (choose one):
+
+- **Anthropic (default):** `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY` -- [Get one here](https://console.anthropic.com/)
+- **Groq (free):** `LLM_PROVIDER=nvidia` + `LLM_BASE_URL=https://api.groq.com/openai/v1` + `LLM_API_KEY=your-groq-key` -- [Get one here](https://console.groq.com/)
+- **NVIDIA NIM:** `LLM_PROVIDER=nvidia` + `NVIDIA_API_KEY`
 
 For booking (required):
 
@@ -242,14 +247,29 @@ booking:
   cancellation_policy:
     free_cancellation_days_before: 7
   pricing_periods:
+    # Base price (first rule)
     - start_date: "2026-01-01"
       end_date: "2026-12-31"
       price_per_night: 120
+    # Weekend override (last matching rule wins)
+    - start_date: "2026-07-01"
+      end_date: "2026-08-31"
+      price_per_night: 90
+      days_of_week: [5, 6]   # 1=Mon ... 5=Fri, 6=Sat, 7=Sun
   minimum_stay_periods:
     - start_date: "2026-01-01"
       end_date: "2026-12-31"
       min_nights: 2
 ```
+
+#### Pricing rules
+
+Pricing periods are evaluated top-to-bottom; **the last matching rule wins**. This lets you set a base price for the whole year and override specific periods or days of the week:
+
+- **Base rate**: a period without `days_of_week` applies to every day.
+- **Day-of-week override**: add `days_of_week: [5, 6]` to apply only on Fridays and Saturdays (ISO: 1=Monday, 7=Sunday).
+
+Prices live **only** in `config.yaml`. The system prompt reads them automatically — do not duplicate them in `knowledge/*.txt`.
 
 ### knowledge/
 
@@ -264,6 +284,8 @@ Create these files in the `knowledge/` directory:
 - `de.txt` (German)
 
 **Format**: Write pure, unformatted text. Write it exactly like you'd explain the B&B rules, check-in instructions, parking, and amenities to a new human receptionist. The AI will read this file and use the facts inside to answer guest questions.
+
+**Important**: Do NOT put prices in the knowledge files. Prices are read automatically from `config.yaml` and injected into the AI system prompt. This avoids duplication and ensures the AI always quotes the correct price.
 
 ---
 
@@ -283,7 +305,7 @@ Tests cover all modules -- webhook handling, AI intent extraction, pricing rules
 whatsapp-ai-receptionist/
 ├── core/
 │   ├── main.py          # FastAPI app, webhook handlers, intent routing
-│   ├── ai.py            # Claude integration, system prompt, intent extraction
+│   ├── ai.py            # LLM integration (Anthropic/Groq/NVIDIA), system prompt, intent extraction
 │   ├── whatsapp.py      # WhatsApp Cloud API client
 │   ├── transcribe.py    # Whisper audio transcription
 │   ├── history.py       # Conversation history (Redis / in-memory)
@@ -321,44 +343,14 @@ No issue template, no CLA. Just describe what you changed and why.
 
 ---
 
-## script di avvio
+## Local development (start script)
 
-Ho creato lo script bash e l'ho
- già reso eseguibile.
+A convenience script runs both Uvicorn and ngrok in one terminal:
 
- Dato che volevi eseguire sia il
- server Python (Uvicorn) che Ngrok,
- il modo migliore è farli partire
- insieme dalla stessa finestra: lo
- script avvia prima il codice
- Python "in background" (così non
- blocca il terminale) e poi lancia
- Ngrok sopra. Quando chiuderai
- Ngrok premendo Ctrl+C, lo script
- in automatico chiuderà anche l'app
- Python.
+```zsh
+./start.zsh
+```
 
- Per avviarlo ti basta aprire il
- tuo terminale e digitare:
-
- ```zsh
-
- /home/nuno/programmazione//whatsapp-ai-receptionist/whatsapp-ai-receptionist/start.zsh
- ```
-
- Oppure, se ti trovi già nella
- cartella del progetto:
-
- ```zsh
-   ./start.zsh
- ```
-
- Appena lo lanci:
-
- 1. Copia l'indirizzo HTTPS che
-    Ngrok ti mostra a schermo.
- 2. Vai su Meta Developer e
-    incollalo aggiungendo /webhook
-    alla fine.
- 3. Scrivi al tuo bot su WhatsApp
-    dal tuo telefono.
+1. Copy the HTTPS URL ngrok shows.
+2. Paste it in Meta Developer portal as `https://<url>/webhook`.
+3. Message your bot on WhatsApp.
