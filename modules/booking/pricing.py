@@ -20,8 +20,16 @@ def price_for_stay(checkin: date, checkout: date, pricing_periods: List[Dict[str
         # last matching period wins
         for period in pricing_periods:
             s, e = _inclusive_dates(period["start_date"], period["end_date"])
+            
+            # handle day of week specifics if present
             if s <= current <= e:
-                price = period["price_per_night"]
+                # check if this period is restricted to specific days of week
+                if "days_of_week" in period:
+                    # 1 = Monday, 7 = Sunday for isoweekday()
+                    if current.isoweekday() in period["days_of_week"]:
+                        price = period["price_per_night"]
+                else:
+                    price = period["price_per_night"]
 
         if price is None:
             raise UnpricedNightError(f"No price defined for night {current}")

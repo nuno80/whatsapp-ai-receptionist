@@ -18,8 +18,8 @@ bot_persona:
   declares_as_ai: true
 
 authorized_approvers:
-  - phone: "+39 3XX XXXXXXX1"
-    name: "Famiglia 1"
+  - phone: "+39 392937505"
+    name: "Maria"
   - phone: "+39 3XX XXXXXXX2"
     name: "Famiglia 2"
   - phone: "+39 3XX XXXXXXX3"
@@ -36,9 +36,31 @@ booking:
   cancellation_policy:
     free_cancellation_days_before: 7
   pricing_periods:
-    - start_date: "2026-01-01"
-      end_date: "2026-12-31"
+    - start_date: "2024-01-01"
+      end_date: "2030-12-31"
       price_per_night: 120
+
+    # Luglio e Agosto: base 70€
+    - start_date: "2024-07-01"
+      end_date: "2024-08-31"
+      price_per_night: 70
+
+    # Luglio e Agosto: Venerdì (5) e Sabato (6) a 90€
+    - start_date: "2024-07-01"
+      end_date: "2024-08-31"
+      price_per_night: 90
+      days_of_week: [5, 6]
+
+    # Settembre: base 85€
+    - start_date: "2024-09-01"
+      end_date: "2024-09-30"
+      price_per_night: 85
+
+    # Settembre: Venerdì (5) e Sabato (6) a 100€
+    - start_date: "2024-09-01"
+      end_date: "2024-09-30"
+      price_per_night: 100
+      days_of_week: [5, 6]
   minimum_stay_periods:
     - start_date: "2026-01-01"
       end_date: "2026-12-31"
