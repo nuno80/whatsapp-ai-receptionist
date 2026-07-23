@@ -213,6 +213,7 @@ def _get_free_ranges(cal: CalendarClient, days_ahead: int = 90) -> list[dict]:
     if range_start is not None:
         ranges.append({"start": range_start.isoformat(), "end": (today + timedelta(days=days_ahead)).isoformat()})
 
+    logger.info("Generated free_ranges: %s", ranges)
     return ranges
 
 def _get_and_delete_pending_payment(payment: dict) -> dict | None:
@@ -342,6 +343,36 @@ async def receive_message(request: Request):
                 return Response(status_code=200)
         else:
             await WA.send_text(phone, "I can only process text and audio messages for now.")
+            return Response(status_code=200)
+
+        # Secret debug command to reset memory completely
+        if user_text.strip().upper() == "RESET":
+            r = _get_pending_payment_redis()
+            cleaned = []
+            if r:
+                r.delete(f"history:{phone}")
+                for key in r.keys("range_lock:*"):
+                    owner = r.get(key)
+                    owner_str = owner.decode("utf-8") if isinstance(owner, bytes) else owner
+                    if owner_str == phone:
+                        r.delete(key)
+                r.delete(f"pending_modification:{phone}")
+                r.delete(f"pending_cancellation:{phone}")
+                r.delete(f"guest_lang:{phone}")
+                cleaned.append("redis")
+            if hasattr(HISTORY, '_store'):
+                HISTORY._store.pop(phone, None)
+                cleaned.append("memory")
+            
+            # Clean calendar events for this phone
+            cal = _get_calendar_client()
+            if cal:
+                events = cal.find_upcoming_events_by_phone(phone)
+                for ev in events:
+                    cal.delete_event(ev["id"])
+                    cleaned.append(f"cal:{ev['id']}")
+
+            await WA.send_text(phone, f"[SYSTEM] Memoria, lock e calendario resettati per il tuo numero. ({','.join(cleaned)})")
             return Response(status_code=200)
 
     except (KeyError, IndexError):
