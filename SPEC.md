@@ -161,6 +161,7 @@ While an Approval request of type `create` or `modify` is `pending`, the system 
 Create:
 
 ```text
+intent: booking_preview     # AI asks server to validate availability and quote the exact price before confirming
 intent: booking_requested   # naming may map to booking_confirmed in extractor; meaning is "ready for approval", not "confirmed stay"
 checkin, checkout, guests, user_name, lang
 ```
@@ -186,7 +187,10 @@ intent: modification_request | modification_confirmed + event_index
 
 ```
 Guest conversation complete
+    → Calculate stay total price
     → Validate: dates, max guests, min stay, every night has price, freebusy free, no soft-lock overlap
+    → Render exact price and ask guest to confirm ("booking_preview")
+    → If Guest confirms ("booking_requested"):
     → Fail → Guest message with reason (no Approval)
     → Pass → Create Approval(create, pending) + soft-lock range
     → Notify all Approvers (summary: dates, guests, name, phone, total, request id)

@@ -71,6 +71,7 @@ class CalendarClient:
                 lock_checkin = date.fromisoformat(lock_checkin_str)
                 lock_checkout = date.fromisoformat(lock_checkout_str)
                 # Overlap: max(start1, start2) < min(end1, end2)
+                # If they DO overlap (meaning < min(end1, end2) is true)
                 if max(checkin, lock_checkin) < min(checkout, lock_checkout):
                     if requester_phone:
                         lock_owner = r.get(key)
@@ -278,6 +279,7 @@ class CalendarClient:
                 continue
             if checkin is not None and checkout is not None:
                 # overlap test: max(start1, start2) < min(end1, end2)
+                # If they do NOT overlap, skip this event
                 if max(checkin, ev_ci) >= min(checkout, ev_co):
                     continue
             if not r.exists(self._range_key(ev_ci, ev_co)):

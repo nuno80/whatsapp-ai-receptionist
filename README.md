@@ -285,7 +285,7 @@ Create these files in the `knowledge/` directory:
 
 **Format**: Write pure, unformatted text. Write it exactly like you'd explain the B&B rules, check-in instructions, parking, and amenities to a new human receptionist. The AI will read this file and use the facts inside to answer guest questions.
 
-**Important**: Do NOT put prices in the knowledge files. Prices are read automatically from `config.yaml` and injected into the AI system prompt. This avoids duplication and ensures the AI always quotes the correct price.
+**Important**: Do NOT put prices in the knowledge files. Prices are read automatically from `config.yaml`. The server computes the final price during the `booking_preview` phase (before confirming the hold) rather than relying on the AI to do math, ensuring the quoted amount is 100% accurate.
 
 ---
 

@@ -116,7 +116,7 @@ def build_system_prompt(config: dict, knowledge: str, free_ranges: list[dict] = 
             f"Minimum stay: {min_stay_text}",
             "",
             f"Pre-calculated free dates for stays:\n{ranges_text}",
-            "IMPORTANT: ONLY offer dates that fall completely within the pre-calculated free dates above. Do not merge disjoint date ranges in your responses.",
+            "IMPORTANT: ONLY offer dates that fall completely within ONE of the pre-calculated free ranges above. Do not merge disjoint date ranges. Check-in must be >= start, checkout must be <= end.",
             "",
             "To book a stay, you need:",
             "1. Check-in date",

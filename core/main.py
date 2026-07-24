@@ -188,18 +188,31 @@ def _get_free_ranges(cal: CalendarClient, days_ahead: int = 90) -> list[dict]:
         logger.error("freebusy query failed: %s", e)
         return []
 
-    # Convert busy periods to a set of occupied dates
+    # Convert busy periods to a set of occupied nights.
+    # An event from 5 to 10 occupies nights 5, 6, 7, 8, 9. 
+    # Night 10 is NOT occupied (it's the checkout morning), so it can be a checkin date.
+    # If the calendar is totally free, busy_dates remains empty.
     busy_dates: set[date] = set()
     for bp in busy_periods:
         bs = date.fromisoformat(bp["start"][:10])
         be = date.fromisoformat(bp["end"][:10])
         d = bs
-        while d <= be:
+        while d < be:  # Strict inequality: don't occupy the checkout night
             busy_dates.add(d)
             d += timedelta(days=1)
 
-    # Build free ranges from consecutive free days
+    # Build free ranges from consecutive free nights
     ranges: list[dict] = []
+    
+    # Fast path: if there are no busy dates at all, return one single big range
+    if not busy_dates:
+        ranges.append({
+            "start": (today + timedelta(days=1)).isoformat(), 
+            "end": (today + timedelta(days=days_ahead)).isoformat()
+        })
+        logger.info("Generated free_ranges (totally free): %s", ranges)
+        return ranges
+
     range_start = None
     for i in range(1, days_ahead + 1):
         d = today + timedelta(days=i)
@@ -208,7 +221,9 @@ def _get_free_ranges(cal: CalendarClient, days_ahead: int = 90) -> list[dict]:
                 range_start = d
         else:
             if range_start is not None:
-                ranges.append({"start": range_start.isoformat(), "end": (d - timedelta(days=1)).isoformat()})
+                # The free block ends on date 'd' (which is the first busy night).
+                # Date 'd' CAN be used as a checkout date for this free block!
+                ranges.append({"start": range_start.isoformat(), "end": d.isoformat()})
                 range_start = None
     if range_start is not None:
         ranges.append({"start": range_start.isoformat(), "end": (today + timedelta(days=days_ahead)).isoformat()})
