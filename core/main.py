@@ -449,6 +449,8 @@ async def _process_message(phone: str, user_text: str):
 
             if intent_type == "booking_requested":
                 await _handle_booking_requested(phone, intent, visible_response)
+            elif intent_type == "booking_preview":
+                await _handle_booking_preview(phone, intent, visible_response, free_ranges)
             elif intent_type == "cancellation_request":
                 await _handle_cancellation_request(phone, visible_response)
             elif intent_type == "cancellation_confirmed":
@@ -480,6 +482,111 @@ def _conversation_suggests_modification(history: list[dict]) -> bool:
     return False
 
 
+def _validate_booking_request(checkin: date, checkout: date, guests: int) -> str | None:
+    """Shared date/guest validation for preview + confirm. Returns error msg or None."""
+    import pytz
+    from datetime import datetime
+    timezone = pytz.timezone(CONFIG["client"]["timezone"])
+    today = datetime.now(timezone).date()
+    if checkin < today:
+        return "La data di check-in non può essere nel passato. Quali altre date cerchi?"
+    if checkout <= checkin:
+        return "La data di check-out deve essere successiva al check-in."
+    nights = (checkout - checkin).days
+    min_stay_periods = CONFIG["booking"].get("minimum_stay_periods", [])
+    from modules.booking.pricing import min_nights_required
+    min_stay = min_nights_required(checkin, checkout, min_stay_periods)
+    if nights < min_stay:
+        return f"Il soggiorno minimo in questo periodo è di {min_stay} notti."
+    max_guests = CONFIG["booking"].get("max_guests", 2)
+    if guests > max_guests:
+        return f"Possiamo ospitare al massimo {max_guests} persone."
+    return None
+
+
+def _check_available_with_cleanup(cal: CalendarClient, checkin: date, checkout: date, phone: str) -> bool:
+    """Availability check that sweeps abandoned yellow events before giving up."""
+    if cal.is_range_available(checkin, checkout, requester_phone=phone):
+        return True
+    cal.cleanup_stale_pending_overlapping(checkin, checkout)
+    return cal.is_range_available(checkin, checkout, requester_phone=phone)
+
+
+async def _handle_booking_preview(phone: str, intent: dict, visible_response: str, free_ranges: list[dict]):
+    """Validate availability + quote a server-computed price BEFORE asking the guest to confirm."""
+    cal = _get_calendar_client()
+    if cal is None:
+        HISTORY.add(phone, "assistant", visible_response)
+        await WA.send_text(phone, visible_response)
+        return
+
+    try:
+        checkin_date = date.fromisoformat(intent["checkin"])
+        checkout_date = date.fromisoformat(intent["checkout"])
+    except (ValueError, KeyError) as e:
+        logger.warning("Invalid date in preview intent: %s", e)
+        error_msg = "C'è stato un problema con le date. Puoi riprovare?"
+        HISTORY.add(phone, "assistant", error_msg)
+        await WA.send_text(phone, error_msg)
+        return
+
+    guests = intent.get("guests", 1)
+    err = _validate_booking_request(checkin_date, checkout_date, guests)
+    if err:
+        HISTORY.add(phone, "assistant", err)
+        await WA.send_text(phone, err)
+        return
+
+    if cal.has_pending_lock(checkin_date, checkout_date, phone):
+        msg = "La tua richiesta è già in fase di approvazione. Ti avviserò appena avrò una risposta!"
+        HISTORY.add(phone, "assistant", msg)
+        await WA.send_text(phone, msg)
+        return
+
+    if not _check_available_with_cleanup(cal, checkin_date, checkout_date, phone):
+        error_msg = (
+            f"Purtroppo le date dal {checkin_date.strftime('%d/%m')} "
+            f"al {checkout_date.strftime('%d/%m')} non sono disponibili."
+        )
+        if free_ranges:
+            alts = []
+            for r in free_ranges[:3]:
+                try:
+                    s = date.fromisoformat(r["start"]).strftime("%d/%m")
+                    e = date.fromisoformat(r["end"]).strftime("%d/%m")
+                    alts.append(f"{s}–{e}")
+                except ValueError:
+                    continue
+            if alts:
+                error_msg += " Altre date libere: " + "; ".join(alts) + "."
+        HISTORY.add(phone, "assistant", error_msg)
+        await WA.send_text(phone, error_msg)
+        return
+
+    from modules.booking.pricing import price_for_stay
+    pricing_periods = CONFIG["booking"].get("pricing_periods", [])
+    try:
+        total_price = price_for_stay(checkin_date, checkout_date, pricing_periods)
+    except Exception as e:
+        logger.error("Pricing error: %s", e)
+        error_msg = "Non sono riuscito a calcolare il prezzo per queste date. Per favore riprova o contattaci."
+        HISTORY.add(phone, "assistant", error_msg)
+        await WA.send_text(phone, error_msg)
+        return
+
+    nights = (checkout_date - checkin_date).days
+    per_night = total_price // nights if nights else total_price
+    recap = (
+        f"*Riepilogo:*\n"
+        f"Dal {checkin_date.strftime('%d/%m')} al {checkout_date.strftime('%d/%m')}\n"
+        f"{nights} notti × €{per_night} = *€{total_price}*\n"
+        f"{guests} ospiti, a nome {intent.get('user_name', 'Ospite')}\n\n"
+        f"Confermi?"
+    )
+    HISTORY.add(phone, "assistant", recap)
+    await WA.send_text(phone, recap)
+
+
 async def _handle_booking_requested(phone: str, intent: dict, visible_response: str):
     """Process a requested booking intent."""
     cal = _get_calendar_client()
@@ -500,41 +607,13 @@ async def _handle_booking_requested(phone: str, intent: dict, visible_response: 
         await WA.send_text(phone, error_msg)
         return
 
-    import pytz
-    from datetime import datetime
-    timezone = pytz.timezone(CONFIG["client"]["timezone"])
-    today = datetime.now(timezone).date()
-    
-    if checkin_date < today:
-        error_msg = "La data di check-in non può essere nel passato. Quali altre date cerchi?"
-        HISTORY.add(phone, "assistant", error_msg)
-        await WA.send_text(phone, error_msg)
-        return
-        
-    if checkout_date <= checkin_date:
-        error_msg = "La data di check-out deve essere successiva al check-in."
-        HISTORY.add(phone, "assistant", error_msg)
-        await WA.send_text(phone, error_msg)
-        return
-        
-    nights = (checkout_date - checkin_date).days
-    min_stay_periods = CONFIG["booking"].get("minimum_stay_periods", [])
-    from modules.booking.pricing import min_nights_required
-    min_stay = min_nights_required(checkin_date, checkout_date, min_stay_periods)
-    if nights < min_stay:
-        error_msg = f"Il soggiorno minimo in questo periodo è di {min_stay} notti."
-        HISTORY.add(phone, "assistant", error_msg)
-        await WA.send_text(phone, error_msg)
-        return
-        
     guests = intent.get("guests", 1)
-    max_guests = CONFIG["booking"].get("max_guests", 2)
-    if guests > max_guests:
-        error_msg = f"Possiamo ospitare al massimo {max_guests} persone."
-        HISTORY.add(phone, "assistant", error_msg)
-        await WA.send_text(phone, error_msg)
+    err = _validate_booking_request(checkin_date, checkout_date, guests)
+    if err:
+        HISTORY.add(phone, "assistant", err)
+        await WA.send_text(phone, err)
         return
-        
+
     # Duplicate guard: guest already has a pending request for these dates
     if cal.has_pending_lock(checkin_date, checkout_date, phone):
         msg = "La tua richiesta è già in fase di approvazione. Ti avviserò appena avrò una risposta!"
@@ -542,7 +621,7 @@ async def _handle_booking_requested(phone: str, intent: dict, visible_response: 
         await WA.send_text(phone, msg)
         return
 
-    if not cal.is_range_available(checkin_date, checkout_date, requester_phone=phone):
+    if not _check_available_with_cleanup(cal, checkin_date, checkout_date, phone):
         error_msg = f"Purtroppo le date dal {checkin_date.strftime('%d/%m')} al {checkout_date.strftime('%d/%m')} non sono disponibili. Vuoi controllare altri giorni?"
         HISTORY.add(phone, "assistant", error_msg)
         await WA.send_text(phone, error_msg)

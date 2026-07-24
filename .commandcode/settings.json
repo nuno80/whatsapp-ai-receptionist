@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(python -m pytest -m pytest tests/test_calendar.py::test_cleanup_deletes_yellow_event_with_expired_lock tests/test_main.py::test_booking_preview_available_sends_recap_with_server_price tests/test_ai_stay.py::test_prompt_instructs_booking_preview_intent -q --no-header -p no:cacheprovider)",
+      "Shell(python3 -m pytest -m pytest tests/test_calendar.py::test_cleanup_deletes_yellow_event_with_expired_lock tests/test_main.py::test_booking_preview_available_sends_recap_with_server_price tests/test_ai_stay.py::test_prompt_instructs_booking_preview_intent -q -p no:cacheprovider)",
+      "Shell(python3 -c import sys)",
+      "Shell(print:*)",
+      "Shell(sys.prefix:*)",
+      "Shell(sys.path:*)",
+      "Shell(/home/nuno/.local/bin/pytest:*)",
+      "Shell(python3 -c import pytest)",
+      "Shell(pytest.__version__:*)",
+      "Shell(2:*)",
+      "Shell(which:*)",
+      "Shell(uv:*)",
+      "Shell(python3 -c import fastapi, httpx, anthropic, yaml, redis, pytz)",
+      "Shell(import:*)",
+      "Shell(core deps OK:*)",
+      "Shell(ls:*)",
+      "Shell(grep:*)",
+      "Shell(/home/nuno/programmazione/whatsapp-ai-receptionist/whatsapp-ai-receptionist/.venv/bin/python:*)",
+      "Shell(head:*)",
+      "Shell(.venv/bin/python:*)",
+      "Shell(cp:*)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

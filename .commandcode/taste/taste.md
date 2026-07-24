@@ -8,3 +8,9 @@
 # testing
 - Use TDD approach: write failing tests first, then implement real logic to make them pass. Confidence: 0.70
 
+# communication
+- Prefers communication in Italian. Confidence: 0.8
+
+# coding-philosophy
+- Values lean, minimal-code philosophy: YAGNI, reuse over rewrite, no unnecessary abstractions, deletion over addition. Chose to install the ponytail "lazy senior dev" ruleset in AGENTS.md. Confidence: 0.6
+

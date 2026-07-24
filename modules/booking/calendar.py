@@ -250,3 +250,66 @@ class CalendarClient:
             calendarId=self._calendar_id,
             eventId=event_id,
         ).execute()
+
+    def _stale_pending_ids(self, items: list[dict], checkin: date | None = None,
+                           checkout: date | None = None) -> list[str]:
+        """Return ids of yellow (pending) events whose Redis soft lock has expired.
+
+        A yellow event is created together with a 24h `range_lock`; if that lock is
+        gone the owner never responded and the event is abandoned — it still blocks
+        `freebusy` though, so it must be swept. If checkin/checkout are given, only
+        events overlapping that range are considered.
+        """
+        r = _get_redis()
+        if r is None:
+            return []
+        stale: list[str] = []
+        for event in items:
+            if event.get("colorId") != self.COLOR_PENDING:
+                continue
+            ev_start = event.get("start", {}).get("dateTime", "")[:10]
+            ev_end = event.get("end", {}).get("dateTime", "")[:10]
+            if not ev_start or not ev_end:
+                continue
+            try:
+                ev_ci = date.fromisoformat(ev_start)
+                ev_co = date.fromisoformat(ev_end)
+            except ValueError:
+                continue
+            if checkin is not None and checkout is not None:
+                # overlap test: max(start1, start2) < min(end1, end2)
+                if max(checkin, ev_ci) >= min(checkout, ev_co):
+                    continue
+            if not r.exists(self._range_key(ev_ci, ev_co)):
+                stale.append(event["id"])
+        return stale
+
+    def cleanup_stale_pending_overlapping(self, checkin: date, checkout: date) -> int:
+        """Sweep abandoned yellow events overlapping [checkin, checkout]. Returns count deleted."""
+        start_dt = self._tz.localize(datetime.combine(checkin, time(0, 0)))
+        end_dt = self._tz.localize(datetime.combine(checkout, time(23, 59)))
+        result = self._service.events().list(
+            calendarId=self._calendar_id,
+            timeMin=start_dt.isoformat(),
+            timeMax=end_dt.isoformat(),
+            singleEvents=True,
+        ).execute()
+        stale = self._stale_pending_ids(result.get("items", []), checkin, checkout)
+        for eid in stale:
+            self.delete_event(eid)
+        return len(stale)
+
+    def cleanup_stale_pending(self) -> int:
+        """Sweep all abandoned yellow events in the next 90 days. Returns count deleted."""
+        now = datetime.now(self._tz)
+        end_dt = self._tz.localize(datetime.combine(now.date() + timedelta(days=90), time(23, 59)))
+        result = self._service.events().list(
+            calendarId=self._calendar_id,
+            timeMin=now.isoformat(),
+            timeMax=end_dt.isoformat(),
+            singleEvents=True,
+        ).execute()
+        stale = self._stale_pending_ids(result.get("items", []))
+        for eid in stale:
+            self.delete_event(eid)
+        return len(stale)

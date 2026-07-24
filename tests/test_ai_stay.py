@@ -76,9 +76,47 @@ def test_build_system_prompt_injected_ranges(tmp_path):
         "bot_persona": {"name": "Giulia"},
         "booking": {"max_guests": 2}
     }
-    
+
     free_ranges = [{"start": "2026-06-01", "end": "2026-06-15"}]
     prompt = build_system_prompt(config, "", free_ranges)
-    
+
     assert "2026-06-01" in prompt
     assert "2026-06-15" in prompt
+
+
+def test_prompt_instructs_booking_preview_intent(tmp_path):
+    config = {
+        "client": {"name": "B&B Roma"},
+        "modules": {"booking": True},
+        "bot_persona": {"name": "Giulia"},
+        "booking": {
+            "max_guests": 2,
+            "pricing_periods": [{"start_date": "2026-01-01", "end_date": "2026-12-31", "price_per_night": 120}],
+        },
+    }
+    prompt = build_system_prompt(config, "", [])
+
+    # AI must hand off to the server (which validates availability + quotes price)
+    # instead of calculating a price / writing a recap itself.
+    assert "booking_preview" in prompt
+    assert "booking_requested" in prompt
+    assert "calculate the total" not in prompt
+
+
+def test_extract_intent_handles_booking_preview():
+    response_text = "Verifico la disponibilita.\n" + json.dumps({
+        "intent": "booking_preview",
+        "checkin": "2026-07-24",
+        "checkout": "2026-07-27",
+        "guests": 2,
+        "user_name": "Armando Luongo",
+        "lang": "it"
+    })
+
+    intent, visible = extract_intent(response_text)
+
+    assert intent["intent"] == "booking_preview"
+    assert intent["checkin"] == "2026-07-24"
+    assert intent["checkout"] == "2026-07-27"
+    assert intent["user_name"] == "Armando Luongo"
+    assert visible == "Verifico la disponibilita."

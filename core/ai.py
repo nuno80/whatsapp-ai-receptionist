@@ -104,18 +104,6 @@ def build_system_prompt(config: dict, knowledge: str, free_ranges: list[dict] = 
         if free_ranges:
             ranges_text = "\n".join([f"- From {r['start']} to {r['end']}" for r in free_ranges])
 
-        # Build pricing summary for Claude
-        pricing_lines = []
-        for p in booking.get("pricing_periods", []):
-            dow = p.get("days_of_week")
-            day_names = {1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 7: "Sun"}
-            if dow:
-                days = ", ".join(day_names.get(d, str(d)) for d in dow)
-                pricing_lines.append(f"- {p['start_date']} to {p['end_date']} ({days}): €{p['price_per_night']}/night")
-            else:
-                pricing_lines.append(f"- {p['start_date']} to {p['end_date']}: €{p['price_per_night']}/night")
-        pricing_text = "\n".join(pricing_lines) if pricing_lines else "See knowledge base."
-
         min_stay = booking.get("minimum_stay_periods", [])
         min_stay_text = ", ".join(f"{m['start_date']} to {m['end_date']}: {m['min_nights']} nights" for m in min_stay) if min_stay else "None"
 
@@ -126,9 +114,6 @@ def build_system_prompt(config: dict, knowledge: str, free_ranges: list[dict] = 
             f"Check-in: {booking.get('checkin_time', '15:00')}, Check-out: {booking.get('checkout_time', '10:00')}",
             f"Max guests: {booking.get('max_guests', 2)}",
             f"Minimum stay: {min_stay_text}",
-            "",
-            f"PRICING (last matching rule wins, day-of-week rules override base):\n{pricing_text}",
-            "When the guest asks about price, calculate the total based on these rules and tell them.",
             "",
             f"Pre-calculated free dates for stays:\n{ranges_text}",
             "IMPORTANT: ONLY offer dates that fall completely within the pre-calculated free dates above. Do not merge disjoint date ranges in your responses.",
@@ -141,16 +126,17 @@ def build_system_prompt(config: dict, knowledge: str, free_ranges: list[dict] = 
             "",
             "IMPORTANT about the booking experience:",
             "- Try to complete the booking in as few messages as possible, but ask one thing per message.",
-            "- Once you have ALL 4 data points (dates, guests, name), show a RECAP with the total price",
-            "  and ask the guest to CONFIRM before proceeding. Example:",
-            "  'Riepilogo: dal 5 al 10 agosto, 2 ospiti, a nome Mario Rossi. Totale: €XXX. Confermi?'",
-            "- ONLY after the guest explicitly confirms (sì, ok, confermo, va bene, perfetto, etc.),",
-            "  respond with the confirmation message AND include the JSON below.",
-            "- If the guest says no, asks to change something, or says it's too expensive, do NOT emit the JSON.",
-            "- Once the guest confirms, respond with the confirmation message",
-            "AND at the end include this JSON on a single line:",
+            "- Do NOT calculate or state a price yourself. The server checks availability and quotes the exact price.",
+            "- Once you have ALL 4 data points (dates, guests, name), respond with a brief line like",
+            "  'Perfetto, verifico la disponibilità.' and include this JSON on a single line:",
+            '{"intent": "booking_preview", "checkin": "<YYYY-MM-DD>", "checkout": "<YYYY-MM-DD>", '
+            '"guests": <number>, "user_name": "<full name>", "lang": "<language code>"}',
+            "- The server then sends the guest a recap with the exact price and asks them to confirm.",
+            "- ONLY after the guest explicitly confirms (sì, ok, confermo, va bene, perfetto, etc.)",
+            "  in a LATER message, respond with the confirmation message AND include this JSON on a single line:",
             '{"intent": "booking_requested", "checkin": "<YYYY-MM-DD>", "checkout": "<YYYY-MM-DD>", '
             '"guests": <number>, "user_name": "<full name>", "lang": "<language code>"}',
+            "- If the guest says no, asks to change something, or says it's too expensive, do NOT emit booking_requested.",
             "IMPORTANT: Use 'booking_requested' (never claim the booking is confirmed, it requires human approval).",
             "IMPORTANT: The JSON goes in plain text at the end, never inside code blocks.",
             "",

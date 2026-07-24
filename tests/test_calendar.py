@@ -94,3 +94,67 @@ def test_create_event(monkeypatch):
     assert "req-123" in desc
     assert "200" in desc
     assert "pending" in desc
+
+
+# --- stale pending event cleanup ---
+
+def _pending_event(eid="evt1", start="2026-07-24T15:00:00+02:00", end="2026-07-27T10:00:00+02:00"):
+    return {
+        "id": eid,
+        "colorId": CalendarClient.COLOR_PENDING,
+        "start": {"dateTime": start},
+        "end": {"dateTime": end},
+    }
+
+def test_cleanup_deletes_yellow_event_with_expired_lock(monkeypatch):
+    client, mock_service = make_client()
+    mock_service.events().list().execute.return_value = {"items": [_pending_event()]}
+    mock_redis = MagicMock()
+    mock_redis.exists.return_value = 0  # no live lock -> stale approval
+    monkeypatch.setattr("modules.booking.calendar._get_redis", lambda: mock_redis)
+
+    deleted = client.cleanup_stale_pending_overlapping(date(2026, 7, 24), date(2026, 7, 27))
+
+    assert deleted == 1
+    mock_service.events().delete().execute.assert_called_once()
+
+def test_cleanup_keeps_yellow_event_with_live_lock(monkeypatch):
+    client, mock_service = make_client()
+    mock_service.events().list().execute.return_value = {"items": [_pending_event()]}
+    mock_redis = MagicMock()
+    mock_redis.exists.return_value = 1  # live lock (e.g. another phone's in-flight request)
+    monkeypatch.setattr("modules.booking.calendar._get_redis", lambda: mock_redis)
+
+    deleted = client.cleanup_stale_pending_overlapping(date(2026, 7, 24), date(2026, 7, 27))
+
+    assert deleted == 0
+    mock_service.events().delete().execute.assert_not_called()
+
+def test_cleanup_ignores_green_confirmed_events(monkeypatch):
+    client, mock_service = make_client()
+    green = _pending_event()
+    green["colorId"] = CalendarClient.COLOR_CONFIRMED
+    mock_service.events().list().execute.return_value = {"items": [green]}
+    mock_redis = MagicMock()
+    monkeypatch.setattr("modules.booking.calendar._get_redis", lambda: mock_redis)
+
+    deleted = client.cleanup_stale_pending_overlapping(date(2026, 7, 24), date(2026, 7, 27))
+
+    assert deleted == 0
+    mock_redis.exists.assert_not_called()
+    mock_service.events().delete().execute.assert_not_called()
+
+def test_cleanup_only_sweeps_overlapping_events(monkeypatch):
+    client, mock_service = make_client()
+    # event outside the requested window -> not touched
+    mock_service.events().list().execute.return_value = {
+        "items": [_pending_event(start="2026-08-10T15:00:00+02:00", end="2026-08-12T10:00:00+02:00")]
+    }
+    mock_redis = MagicMock()
+    mock_redis.exists.return_value = 0
+    monkeypatch.setattr("modules.booking.calendar._get_redis", lambda: mock_redis)
+
+    deleted = client.cleanup_stale_pending_overlapping(date(2026, 7, 24), date(2026, 7, 27))
+
+    assert deleted == 0
+    mock_service.events().delete().execute.assert_not_called()
