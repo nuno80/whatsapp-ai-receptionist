@@ -591,6 +591,10 @@ async def _handle_booking_preview(phone: str, intent: dict, visible_response: st
 
     nights = (checkout_date - checkin_date).days
     per_night = total_price // nights if nights else total_price
+    
+    # Store the exact intent data in history so the AI can read it back when confirming
+    HISTORY.add(phone, "assistant", visible_response)
+    
     recap = (
         f"*Riepilogo:*\n"
         f"Dal {checkin_date.strftime('%d/%m')} al {checkout_date.strftime('%d/%m')}\n"
@@ -598,7 +602,13 @@ async def _handle_booking_preview(phone: str, intent: dict, visible_response: st
         f"{guests} ospiti, a nome {intent.get('user_name', 'Ospite')}\n\n"
         f"Confermi?"
     )
-    HISTORY.add(phone, "assistant", recap)
+    # The recap itself goes to the user, but we inject a small invisible hint in the assistant's memory
+    # so Claude knows the recap was shown and what exactly to confirm.
+    HISTORY.add(phone, "assistant", recap + "\n[SYSTEM NOTE: If the user says Yes/Si, reply with booking_requested using exactly these dates and names]")
+    
+    # But only send the clean recap to WhatsApp
+    if visible_response:
+        await WA.send_text(phone, visible_response)
     await WA.send_text(phone, recap)
 
 
@@ -657,6 +667,11 @@ async def _handle_booking_requested(phone: str, intent: dict, visible_response: 
     # Create YELLOW event on Calendar immediately (visible to owners)
     from core.phone import normalize_phone
     guest_phone = normalize_phone(phone)
+
+    # We send the visible response back to the user acknowledging the request
+    HISTORY.add(phone, "assistant", visible_response)
+    if visible_response:
+        await WA.send_text(phone, visible_response)
 
     event_id = cal.create_event(
         checkin_date=checkin_date,

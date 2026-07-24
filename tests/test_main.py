@@ -251,8 +251,8 @@ def test_booking_preview_available_sends_recap_with_server_price(mocker, bypass_
     assert resp.status_code == 200
 
     # Recap sent with server-computed price (2 nights x 100 = 200)
-    mock_send.assert_called_once()
-    sent_text = mock_send.call_args.args[1]
+    assert mock_send.call_count == 2
+    sent_text = mock_send.call_args_list[-1].args[1]
     assert "€200" in sent_text
     assert "Jane" in sent_text
     assert "16/03" in sent_text and "18/03" in sent_text
@@ -308,8 +308,8 @@ def test_booking_preview_unavailable_then_cleanup_recaps(mocker, bypass_webhook_
 
     # cleanup ran and freed the dates -> recap with server price sent
     mock_calendar.cleanup_stale_pending_overlapping.assert_called_once()
-    mock_send.assert_called_once()
-    sent_text = mock_send.call_args.args[1]
+    assert mock_send.call_count == 2
+    sent_text = mock_send.call_args_list[-1].args[1]
     assert "€200" in sent_text
     mock_calendar.create_event.assert_not_called()
 

@@ -67,7 +67,12 @@ class CalendarClient:
             # Check if any lock overlaps with this range
             for key in r.keys("range_lock:*"):
                 key_str = key.decode("utf-8") if isinstance(key, bytes) else key
-                _, lock_checkin_str, lock_checkout_str = key_str.split(":")
+                parts = key_str.split(":")
+                if len(parts) == 3:
+                    _, lock_checkin_str, lock_checkout_str = parts
+                else:
+                    # In case of malformed keys, skip
+                    continue
                 lock_checkin = date.fromisoformat(lock_checkin_str)
                 lock_checkout = date.fromisoformat(lock_checkout_str)
                 # Overlap: max(start1, start2) < min(end1, end2)
