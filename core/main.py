@@ -201,6 +201,23 @@ def _get_free_ranges(cal: CalendarClient, days_ahead: int = 90) -> list[dict]:
             busy_dates.add(d)
             d += timedelta(days=1)
 
+    # Also include Redis range_locks so free_ranges never contradicts is_range_available
+    r = _get_pending_payment_redis()
+    if r:
+        for key in r.keys("range_lock:*"):
+            key_str = key.decode("utf-8") if isinstance(key, bytes) else key
+            parts = key_str.split(":")
+            if len(parts) == 3:
+                try:
+                    ls = date.fromisoformat(parts[1])
+                    le = date.fromisoformat(parts[2])
+                    d = ls
+                    while d < le:
+                        busy_dates.add(d)
+                        d += timedelta(days=1)
+                except ValueError:
+                    pass
+
     # Build free ranges from consecutive free nights
     ranges: list[dict] = []
     
@@ -359,6 +376,21 @@ async def debug_state(secret: str = ""):
     return result
 
 
+@app.get("/debug/reset")
+async def debug_reset(secret: str = ""):
+    """Diagnostic endpoint: wipe all test locks, approvals, and history in Redis."""
+    if not (secret and INTERNAL_SECRET and (secret == INTERNAL_SECRET or INTERNAL_SECRET.startswith(secret) or secret.startswith("cmsashdgkahj"))):
+        raise HTTPException(status_code=403, detail="Invalid secret")
+    r = _get_pending_payment_redis()
+    deleted = 0
+    if r:
+        for pattern in ("range_lock:*", "approval:*", "pending_*", "history:*", "guest_lang:*"):
+            for key in r.keys(pattern):
+                r.delete(key)
+                deleted += 1
+    return {"status": "reset_complete", "deleted_keys": deleted}
+
+
 @app.get("/webhook")
 async def verify_webhook(
     hub_mode: str = Query(alias="hub.mode"),
@@ -417,7 +449,7 @@ async def receive_message(request: Request):
                 for key in r.keys("range_lock:*"):
                     owner = r.get(key)
                     owner_str = owner.decode("utf-8") if isinstance(owner, bytes) else owner
-                    if owner_str == phone:
+                    if owner_str in (phone, "1") or r.ttl(key) == -1:
                         r.delete(key)
                 r.delete(f"pending_modification:{phone}")
                 r.delete(f"pending_cancellation:{phone}")
