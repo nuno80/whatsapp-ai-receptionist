@@ -23,9 +23,11 @@ def mock_whatsapp():
     return mock
 
 def test_is_approver(mock_config):
+    # Both exact Meta raw string and config raw string get normalized
     assert is_approver("393000000001", mock_config) == "Anna"
-    assert is_approver("393000000002", mock_config) == "Marco"
-    assert is_approver("+393000000003", mock_config) is None
+    assert is_approver("+39 300 0000002", mock_config) == "Marco"
+    assert is_approver("3000000001", mock_config) == "Anna" # implicitly gets 39 prefix from phone normalizer
+    assert is_approver("393000000003", mock_config) is None
 
 @pytest.mark.asyncio
 async def test_create_request_fans_out(mock_redis, mock_config, mock_whatsapp):

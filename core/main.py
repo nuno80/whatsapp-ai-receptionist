@@ -553,7 +553,7 @@ async def _handle_booking_preview(phone: str, intent: dict, visible_response: st
         return
 
     if cal.has_pending_lock(checkin_date, checkout_date, phone):
-        msg = "La tua richiesta è già in fase di approvazione. Ti avviserò appena avrò una risposta!"
+        msg = "La tua richiesta per queste date è già in attesa di approvazione! Ti contatteremo non appena l'host avrà confermato."
         HISTORY.add(phone, "assistant", msg)
         await WA.send_text(phone, msg)
         return
@@ -641,7 +641,7 @@ async def _handle_booking_requested(phone: str, intent: dict, visible_response: 
 
     # Duplicate guard: guest already has a pending request for these dates
     if cal.has_pending_lock(checkin_date, checkout_date, phone):
-        msg = "La tua richiesta è già in fase di approvazione. Ti avviserò appena avrò una risposta!"
+        msg = "La tua richiesta per queste date è già in attesa di approvazione! Ti contatteremo non appena l'host avrà confermato."
         HISTORY.add(phone, "assistant", msg)
         await WA.send_text(phone, msg)
         return

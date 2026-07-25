@@ -328,6 +328,6 @@ def test_booking_preview_already_pending_lock(mocker, bypass_webhook_verificatio
 
     mock_send.assert_called_once()
     sent_text = mock_send.call_args.args[1]
-    assert "già in fase di approvazione" in sent_text
+    assert "già in attesa di approvazione" in sent_text
     # availability not even checked
     mock_calendar.is_range_available.assert_not_called()

@@ -22,10 +22,10 @@ authorized_approvers:
     name: "Maria"
   - phone: "+39 3666820068"
     name: "Armando"
-  - phone: "+39 3XX XXXXXXX3"
-    name: "Famiglia 3"
-  - phone: "+39 3XX XXXXXXX4"
-    name: "Famiglia 4"
+  # - phone: "+39 3XX XXXXXXX3"
+  #   name: "Famiglia 3"
+  # - phone: "+39 3XX XXXXXXX4"
+  #   name: "Famiglia 4"
 
 booking:
   calendar_id: "${GOOGLE_CALENDAR_ID}"

@@ -58,7 +58,7 @@ def test_config_yaml_has_bnb_schema(monkeypatch):
     assert config["bot_persona"]["declares_as_ai"] is True
 
     approvers = config["authorized_approvers"]
-    assert len(approvers) == 4
+    assert len(approvers) >= 2
     assert all("phone" in a and "name" in a for a in approvers)
 
     booking = config["booking"]

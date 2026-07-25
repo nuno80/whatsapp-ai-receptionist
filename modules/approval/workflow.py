@@ -1,9 +1,14 @@
 import json
+import logging
 import random
 import string
 import redis
 from datetime import date
 from modules.booking.calendar import CalendarClient
+
+logger = logging.getLogger(__name__)
+_pending_requests_fallback: dict[str, str] = {}
+_claim_fallback: dict[str, str] = {}
 
 def _get_calendar_client(config: dict) -> CalendarClient | None:
     booking_config = config.get("booking", {})
@@ -25,15 +30,19 @@ def is_approver(phone: str, config: dict) -> str | None:
             return approver["name"]
     return None
 
-async def get_pending_requests(redis_client: redis.Redis) -> list[str]:
-    keys = redis_client.keys("approval:*")
-    # Filter out claim keys
-    req_keys = [k.decode('utf-8') if isinstance(k, bytes) else k for k in keys if b"claim" not in (k if isinstance(k, bytes) else k.encode('utf-8'))]
-    return [k.replace("approval:", "") for k in req_keys]
+async def get_pending_requests(redis_client: redis.Redis | None) -> list[str]:
+    if redis_client:
+        keys = redis_client.keys("approval:*")
+        req_keys = [k.decode('utf-8') if isinstance(k, bytes) else k for k in keys if b"claim" not in (k if isinstance(k, bytes) else k.encode('utf-8'))]
+        return [k.replace("approval:", "") for k in req_keys]
+    return list(_pending_requests_fallback.keys())
 
-async def create_request(redis_client: redis.Redis, config: dict, whatsapp_client, data: dict) -> str:
+async def create_request(redis_client: redis.Redis | None, config: dict, whatsapp_client, data: dict) -> str:
     req_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
-    redis_client.set(f"approval:{req_id}", json.dumps(data))
+    if redis_client:
+        redis_client.set(f"approval:{req_id}", json.dumps(data))
+    else:
+        _pending_requests_fallback[req_id] = json.dumps(data)
     
     text = (
         f"Nuova richiesta {req_id} ({data.get('type')}):\n"
@@ -262,6 +271,9 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
             )
             
     # Remove from pending
-    redis_client.delete(f"approval:{req_id}")
+    if redis_client:
+        redis_client.delete(f"approval:{req_id}")
+    else:
+        _pending_requests_fallback.pop(req_id, None)
     
     return "approved" if action == "OK" else "rejected"

@@ -152,11 +152,17 @@ class CalendarClient:
             return False
         for key in r.keys("range_lock:*"):
             key_str = key.decode("utf-8") if isinstance(key, bytes) else key
-            _, lc, lo = key_str.split(":")
-            if max(checkin, date.fromisoformat(lc)) < min(checkout, date.fromisoformat(lo)):
-                owner = r.get(key)
-                if owner and (owner.decode("utf-8") if isinstance(owner, bytes) else owner) == requester_phone:
-                    return True
+            parts = key_str.split(":")
+            if len(parts) != 3:
+                continue
+            _, lc, lo = parts
+            try:
+                if max(checkin, date.fromisoformat(lc)) < min(checkout, date.fromisoformat(lo)):
+                    owner = r.get(key)
+                    if owner and (owner.decode("utf-8") if isinstance(owner, bytes) else owner) == requester_phone:
+                        return True
+            except ValueError:
+                continue
         return False
 
     def create_event(
