@@ -100,6 +100,7 @@ def test_prompt_instructs_booking_preview_intent(tmp_path):
     # instead of calculating a price / writing a recap itself.
     assert "booking_preview" in prompt
     assert "booking_requested" in prompt
+    assert "SAME-DAY TURNOVER" in prompt
     assert "calculate the total" not in prompt
 
 

@@ -117,6 +117,7 @@ def build_system_prompt(config: dict, knowledge: str, free_ranges: list[dict] = 
             "",
             f"Pre-calculated free dates for stays:\n{ranges_text}",
             "IMPORTANT: ONLY offer dates that fall completely within ONE of the pre-calculated free ranges above. Do not merge disjoint date ranges. Check-in must be >= start, checkout must be <= end.",
+            "IMPORTANT NOTE ON SAME-DAY TURNOVER: Since check-out is in the morning (10:00) and check-in is in the afternoon (15:00), the check-out date of a previous stay is completely FREE and VALID as the check-in date for a new stay! For example, if a free range is From 2026-09-10 to 2026-10-23, then 2026-09-10 is 100% available for check-in even if another guest checks out on 2026-09-10 morning.",
             "",
             "To book a stay, you need:",
             "1. Check-in date",
