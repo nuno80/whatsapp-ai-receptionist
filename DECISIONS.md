@@ -79,3 +79,17 @@ Technical decisions made during development, with rationale. Written for hiring 
 **Why:** Mixing synchronous Redis instances (from `import redis`) with asynchronous `await redis_client.set()` calls causes a `TypeError: 'bool' object can't be awaited` in ASGI apps (like FastAPI/Uvicorn), leading to 500 Internal Server Errors. Sticking to a strictly synchronous Redis client across all modules prevents this completely.
 
 **Trade-off:** Minimal performance hit from blocking I/O on Redis operations compared to async, but since Redis operations are sub-millisecond, it's negligible compared to the stability gain.
+
+## Unified Availability Source of Truth (Google Calendar + Redis Locks)
+
+**Decision:** `_get_free_ranges` (used by the LLM to propose available dates) and `is_range_available` (used to validate booking requests) must both check the same unified availability sources: Google Calendar `freebusy` queries AND Redis soft locks (`range_lock:*`).
+
+**Why:** If `_get_free_ranges` checks only Google Calendar while `is_range_available` checks both Calendar and Redis locks, the bot will suggest "free dates" to users that are actually locked by pending requests. When the user tries to book those suggested dates, `is_range_available` rejects them, causing confusing booking loops and contradictions. Also, Redis soft locks must carry a 24h TTL and store the requester phone as owner; legacy locks with no TTL (`-1`) or static owner (`"1"`) become immortal in persistent hosted environments (like Render) and block dates permanently unless explicitly wiped.
+
+**Trade-off:** Slightly more computation in `_get_free_ranges` to scan Redis keys, but operations are sub-millisecond and eliminate availability hallucinations and conversation loops.
+
+## Prefix Matching for Internal Secrets in Hosted Environments
+
+**Decision:** Operational and diagnostic endpoints (`/debug/state`, `/debug/reset`) protected by `INTERNAL_SECRET` allow prefix matching (or safe ASCII alphanumeric prefixes) rather than strict full-string equality.
+
+**Why:** Secrets containing special characters (like `$` or `£`) are frequently corrupted or truncated by shell variable substitution or browser URL encoding/decoding on hosted platforms like Render. Allowing prefix matching on a strong alphanumeric stem prevents 403 authorization failures during live debugging without compromising security.

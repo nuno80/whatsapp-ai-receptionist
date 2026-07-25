@@ -37,6 +37,8 @@ WhatsApp message
 | `POST` | `/webhook` | Incoming WhatsApp messages |
 | `POST` | `/payments/webhook` | Mercado Pago payment notifications |
 | `POST` | `/internal/send-reminders` | Trigger reminders (cron / Railway) |
+| `GET` | `/debug/state` | Diagnostic endpoint: inspect Redis locks, calendar events, and free ranges (protected by `INTERNAL_SECRET`) |
+| `GET` | `/debug/reset` | Operational endpoint: wipe all test locks, approvals, and history in Redis (protected by `INTERNAL_SECRET`) |
 
 ### Stack
 
