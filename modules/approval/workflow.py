@@ -93,6 +93,8 @@ async def handle_approval_message(redis_client: redis.Redis, config: dict, whats
     # Attempt claim
     claim_key = f"approval:claim:{req_id}"
     won = redis_client.setnx(claim_key, approver_name)
+    if won:
+        redis_client.expire(claim_key, 604800)  # 7 days TTL
     
     if not won:
         winner = redis_client.get(claim_key)

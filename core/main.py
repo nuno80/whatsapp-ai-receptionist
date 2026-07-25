@@ -451,6 +451,8 @@ async def receive_message(request: Request):
                     owner_str = owner.decode("utf-8") if isinstance(owner, bytes) else owner
                     if owner_str in (phone, "1") or r.ttl(key) == -1:
                         r.delete(key)
+                for key in r.keys("approval:*"):
+                    r.delete(key)
                 r.delete(f"pending_modification:{phone}")
                 r.delete(f"pending_cancellation:{phone}")
                 r.delete(f"pending_preview:{phone}")
