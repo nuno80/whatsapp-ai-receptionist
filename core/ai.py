@@ -127,6 +127,7 @@ def build_system_prompt(config: dict, knowledge: str, free_ranges: list[dict] = 
             "",
             "IMPORTANT about the booking experience:",
             "- When speaking to the guest, always write out dates with the full month name in the guest's language (e.g., '10 settembre 2026' in Italian, '10 September 2026' in English) instead of numeric formats like 10/09 or 2026-09-10, to prevent international date format confusion.",
+            "- Whenever you summarize or mention stay dates to the guest, always remind them of the check-in time (15:00) and check-out time (10:00).",
             "- Try to complete the booking in as few messages as possible, but ask one thing per message.",
             "- Do NOT calculate or state a price yourself. The server checks availability and quotes the exact price.",
             "- Once you have ALL 4 data points (dates, guests, name), respond with a brief line like",

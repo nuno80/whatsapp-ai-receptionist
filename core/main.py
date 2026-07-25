@@ -694,9 +694,12 @@ async def _handle_booking_preview(phone: str, intent: dict, visible_response: st
     # Store the exact intent data in history so the AI can read it back when confirming
     HISTORY.add(phone, "assistant", visible_response)
     
+    checkin_time = CONFIG["booking"].get("checkin_time", "15:00")
+    checkout_time = CONFIG["booking"].get("checkout_time", "10:00")
     recap = (
         f"*Riepilogo:*\n"
-        f"Dal {checkin_date.strftime('%d/%m')} al {checkout_date.strftime('%d/%m')}\n"
+        f"Check-in: {checkin_date.strftime('%d/%m')} (dalle ore {checkin_time})\n"
+        f"Check-out: {checkout_date.strftime('%d/%m')} (entro le ore {checkout_time})\n"
         f"{nights} notti × €{per_night} = *€{total_price}*\n"
         f"{guests} ospiti, a nome {intent.get('user_name', 'Ospite')}\n\n"
         f"Confermi?"
