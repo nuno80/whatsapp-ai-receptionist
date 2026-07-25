@@ -453,6 +453,7 @@ async def receive_message(request: Request):
                         r.delete(key)
                 r.delete(f"pending_modification:{phone}")
                 r.delete(f"pending_cancellation:{phone}")
+                r.delete(f"pending_preview:{phone}")
                 r.delete(f"guest_lang:{phone}")
                 cleaned.append("redis")
             if hasattr(HISTORY, '_store'):
@@ -542,7 +543,22 @@ async def _process_message(phone: str, user_text: str):
             intent_type = intent.get("intent", "")
             logger.info("Intent detected: %s", intent)
 
+            if intent_type == "booking_preview":
+                r = _get_pending_payment_redis()
+                if r and r.get(f"pending_preview:{phone}"):
+                    try:
+                        prev_str = r.get(f"pending_preview:{phone}")
+                        prev = json_lib.loads(prev_str if isinstance(prev_str, str) else prev_str.decode("utf-8"))
+                        if prev.get("checkin") == intent.get("checkin") and prev.get("checkout") == intent.get("checkout"):
+                            logger.info("Promoting repeated booking_preview to booking_requested for %s (%s→%s)", phone, intent.get("checkin"), intent.get("checkout"))
+                            intent_type = "booking_requested"
+                            intent["intent"] = "booking_requested"
+                    except Exception as ex:
+                        logger.warning("Error checking pending_preview: %s", ex)
+
             if intent_type == "booking_requested":
+                r = _get_pending_payment_redis()
+                if r: r.delete(f"pending_preview:{phone}")
                 await _handle_booking_requested(phone, intent, visible_response)
             elif intent_type == "booking_preview":
                 await _handle_booking_preview(phone, intent, visible_response, free_ranges)
@@ -687,9 +703,12 @@ async def _handle_booking_preview(phone: str, intent: dict, visible_response: st
     # so Claude knows the recap was shown and what exactly to confirm.
     HISTORY.add(phone, "assistant", recap + "\n[SYSTEM NOTE: If the user says Yes/Si, reply with booking_requested using exactly these dates and names]")
     
-    # But only send the clean recap to WhatsApp
-    if visible_response:
-        await WA.send_text(phone, visible_response)
+    # Save preview state so subsequent confirmation promotes to requested even if LLM repeats preview
+    r = _get_pending_payment_redis()
+    if r and intent.get("checkin") and intent.get("checkout"):
+        r.set(f"pending_preview:{phone}", json_lib.dumps(intent), ex=900)
+
+    # Send only the clean recap to WhatsApp to avoid double-message spam
     await WA.send_text(phone, recap)
 
 

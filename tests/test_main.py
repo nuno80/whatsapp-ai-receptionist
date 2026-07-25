@@ -251,7 +251,7 @@ def test_booking_preview_available_sends_recap_with_server_price(mocker, bypass_
     assert resp.status_code == 200
 
     # Recap sent with server-computed price (2 nights x 100 = 200)
-    assert mock_send.call_count == 2
+    assert mock_send.call_count == 1
     sent_text = mock_send.call_args_list[-1].args[1]
     assert "€200" in sent_text
     assert "Jane" in sent_text
@@ -308,7 +308,7 @@ def test_booking_preview_unavailable_then_cleanup_recaps(mocker, bypass_webhook_
 
     # cleanup ran and freed the dates -> recap with server price sent
     mock_calendar.cleanup_stale_pending_overlapping.assert_called_once()
-    assert mock_send.call_count == 2
+    assert mock_send.call_count == 1
     sent_text = mock_send.call_args_list[-1].args[1]
     assert "€200" in sent_text
     mock_calendar.create_event.assert_not_called()
@@ -331,3 +331,40 @@ def test_booking_preview_already_pending_lock(mocker, bypass_webhook_verificatio
     assert "già in attesa di approvazione" in sent_text
     # availability not even checked
     mock_calendar.is_range_available.assert_not_called()
+
+
+def test_repeated_booking_preview_promotes_to_requested(mocker, bypass_webhook_verification):
+    """When the LLM repeats booking_preview for dates we already previewed, promote to booking_requested."""
+    mocker.patch("core.main.CONFIG", _preview_config())
+    store = {}
+    mock_redis = mocker.MagicMock()
+    mock_redis.get.side_effect = lambda k: store.get(k)
+    mock_redis.set.side_effect = lambda k, v, ex=None: store.update({k: v})
+    mock_redis.delete.side_effect = lambda k: store.pop(k, None)
+    mocker.patch("core.main._get_pending_payment_redis", return_value=mock_redis)
+
+    mock_calendar = mocker.MagicMock()
+    mock_calendar.is_range_available.return_value = True
+    mock_calendar.has_pending_lock.return_value = False
+    mock_calendar.create_event.return_value = "yellow_ev_123"
+    mocker.patch("core.main._get_calendar_client", return_value=mock_calendar)
+    mocker.patch("core.main._get_free_ranges", return_value=[])
+    mock_send = mocker.patch("core.main.WA.send_text", new_callable=mocker.AsyncMock)
+    mock_create_req = mocker.patch("modules.approval.workflow.create_request", new_callable=mocker.AsyncMock)
+
+    mocker.patch("core.main.get_ai_response", return_value=_PREVIEW_INTENT)
+    mocker.patch("core.main._acquire_message_lock", return_value=True)
+
+    # First message: triggers preview, stores pending_preview in redis
+    resp1 = _post_message("Vorrei prenotare")
+    assert resp1.status_code == 200
+    assert mock_send.call_count == 1
+    mock_create_req.assert_not_called()
+    mock_calendar.create_event.assert_not_called()
+
+    # Second message: user replies "Si", LLM repeats _PREVIEW_INTENT -> should promote to requested!
+    resp2 = _post_message("Si")
+    assert resp2.status_code == 200
+    mock_create_req.assert_called_once()  # Approval workflow triggered!
+    mock_calendar.create_event.assert_called_once()  # Yellow event created on calendar!
+
