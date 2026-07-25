@@ -44,3 +44,7 @@ Rules:
 Not lazy about: understanding the problem (read it fully and trace the real flow before picking a rung, a small diff you don't understand is just laziness dressed up as efficiency), input validation at trust boundaries, error handling that prevents data loss, security, accessibility, the calibration real hardware needs (the platform is never the spec ideal, a clock drifts, a sensor reads off), anything explicitly requested. Lazy code without its check is unfinished: non-trivial logic leaves ONE runnable check behind, the smallest thing that fails if the logic breaks (an assert-based demo/self-check or one small test file; no frameworks, no fixtures). Trivial one-liners need no test.
 
 Ponytail commands: `/ponytail` (lazy mode), `/ponytail-review` (diff over-engineering review), `/ponytail-audit` (whole-repo audit), `/ponytail-debt` (deferred-shortcut ledger), `/ponytail-gain` (impact scoreboard), `/ponytail-help` (reference card).
+
+The app is running on render, is fully deployed with meta settings completed and redis working on render.
+
+Google calendar is integrated with the app and the bot is able to load the events on it.

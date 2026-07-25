@@ -559,6 +559,7 @@ async def _handle_booking_preview(phone: str, intent: dict, visible_response: st
         return
 
     if not _check_available_with_cleanup(cal, checkin_date, checkout_date, phone):
+        logger.warning("[DEBUG-avail] _handle_booking_preview: dates %s→%s NOT available for phone %s", checkin_date, checkout_date, phone)
         error_msg = (
             f"Purtroppo le date dal {checkin_date.strftime('%d/%m')} "
             f"al {checkout_date.strftime('%d/%m')} non sono disponibili."

@@ -83,7 +83,11 @@ class CalendarClient:
                         lock_owner_str = lock_owner.decode("utf-8") if isinstance(lock_owner, bytes) else lock_owner
                         if lock_owner_str == requester_phone:
                             continue  # it's our own pending request, not a real conflict
+                    logger.info("[DEBUG-avail] BLOCKED by Redis lock %s (owner=%s) for request %s→%s phone=%s",
+                                key_str, r.get(key), checkin, checkout, requester_phone)
                     return False
+        else:
+            logger.info("[DEBUG-avail] Redis not available for lock check (%s→%s)", checkin, checkout)
 
         # Assuming checkin at 15:00, checkout at 10:00 as typical defaults if not provided.
         # Hardcoding for now, should ideally come from config, but keeping it minimal.
@@ -115,6 +119,8 @@ class CalendarClient:
         }
         result = self._service.freebusy().query(body=body).execute()
         busy = result["calendars"][self._calendar_id]["busy"]
+        if busy:
+            logger.info("[DEBUG-avail] is_range_available(%s→%s) freebusy returned busy: %s", checkin, checkout, busy)
         return len(busy) == 0
 
     def lock_range(self, checkin: date, checkout: date, requester_phone: str = "1") -> None:
