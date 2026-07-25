@@ -311,6 +311,53 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/debug/state")
+async def debug_state(secret: str = ""):
+    """Diagnostic endpoint: show Redis locks + calendar events + free_ranges."""
+    if secret != INTERNAL_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid secret")
+
+    result = {"redis_locks": [], "calendar_events": [], "free_ranges": [], "redis_connected": False}
+
+    r = _get_pending_payment_redis()
+    if r:
+        result["redis_connected"] = True
+        for key in r.keys("range_lock:*"):
+            owner = r.get(key)
+            ttl = r.ttl(key)
+            result["redis_locks"].append({"key": key, "owner": owner, "ttl_seconds": ttl})
+        for key in r.keys("approval:*"):
+            result["redis_locks"].append({"key": key, "value": r.get(key)})
+
+    cal = _get_calendar_client()
+    if cal:
+        from datetime import timedelta
+        now = datetime.now(cal._tz)
+        end = now + timedelta(days=90)
+        try:
+            events = cal._service.events().list(
+                calendarId=cal._calendar_id,
+                timeMin=now.isoformat(),
+                timeMax=end.isoformat(),
+                singleEvents=True,
+                orderBy="startTime",
+            ).execute()
+            for e in events.get("items", []):
+                result["calendar_events"].append({
+                    "id": e["id"],
+                    "summary": e.get("summary", ""),
+                    "start": e.get("start", {}).get("dateTime", e.get("start", {}).get("date")),
+                    "end": e.get("end", {}).get("dateTime", e.get("end", {}).get("date")),
+                    "colorId": e.get("colorId", "default"),
+                })
+        except Exception as ex:
+            result["calendar_error"] = str(ex)
+
+        result["free_ranges"] = _get_free_ranges(cal)
+
+    return result
+
+
 @app.get("/webhook")
 async def verify_webhook(
     hub_mode: str = Query(alias="hub.mode"),
